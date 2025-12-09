@@ -556,7 +556,15 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const supabase = createClient();
 
+  // Dev mode: if Supabase is not configured, skip auth
+  const isDevMode = !supabase;
+
   useEffect(() => {
+    if (isDevMode) {
+      setLoading(false);
+      return;
+    }
+
     const checkUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       setUser(user);
@@ -570,7 +578,7 @@ export default function Home() {
     });
 
     return () => subscription.unsubscribe();
-  }, [supabase.auth]);
+  }, [supabase, isDevMode]);
 
   if (loading) {
     return (
@@ -578,6 +586,11 @@ export default function Home() {
         <div className="w-8 h-8 border-2 border-slate-700 border-t-blue-500 rounded-full animate-spin" />
       </div>
     );
+  }
+
+  // Dev mode: render dashboard without auth
+  if (isDevMode) {
+    return <Dashboard user={null as unknown as User} />;
   }
 
   if (!user) {
