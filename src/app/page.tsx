@@ -34,62 +34,61 @@ function MagicLinkForm() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-lg shadow">
-        <div>
-          <h1 className="text-3xl font-bold text-center text-gray-900">
-            Valens Dash
-          </h1>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            Enter your email to receive a magic link
-          </p>
-        </div>
-
-        <form className="mt-8 space-y-6" onSubmit={handleSendMagicLink}>
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded">
-              {error}
-            </div>
-          )}
-
-          {message && (
-            <div className="bg-green-50 border border-green-200 text-green-600 px-4 py-3 rounded">
-              {message}
-            </div>
-          )}
-
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-              Email
-            </label>
-            <input
-              id="email"
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              placeholder="you@example.com"
-            />
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+      <div className="max-w-md w-full mx-4">
+        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 shadow-2xl border border-white/20">
+          <div className="text-center mb-8">
+            <h1 className="text-3xl font-bold text-white mb-2">Welcome Back</h1>
+            <p className="text-slate-400">Sign in to your dashboard</p>
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
-          >
-            {loading ? "Sending..." : "Send Magic Link"}
-          </button>
-        </form>
+          <form className="space-y-5" onSubmit={handleSendMagicLink}>
+            {error && (
+              <div className="bg-red-500/20 border border-red-500/50 text-red-200 px-4 py-3 rounded-lg text-sm">
+                {error}
+              </div>
+            )}
 
-        <p className="text-center text-sm text-gray-500">
-          <a href="/login" className="text-blue-600 hover:underline">
-            Sign in with password instead
-          </a>
-        </p>
+            {message && (
+              <div className="bg-emerald-500/20 border border-emerald-500/50 text-emerald-200 px-4 py-3 rounded-lg text-sm">
+                {message}
+              </div>
+            )}
+
+            <div>
+              <label htmlFor="email" className="block text-sm font-medium text-slate-300 mb-2">
+                Email address
+              </label>
+              <input
+                id="email"
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                placeholder="you@example.com"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? "Sending..." : "Send Magic Link"}
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );
+}
+
+interface GitHubUser {
+  login: string;
+  name: string | null;
+  avatar_url: string;
+  html_url: string;
 }
 
 interface ActionablePRData {
@@ -147,7 +146,6 @@ function combineActionableItems(
   const items: ActionableItem[] = [];
   const linkedPRUrls = new Set<string>();
 
-  // Build a map of PR URLs from Linear attachments
   const linearByPrUrl = new Map<string, LinearIssueData>();
   for (const issue of linearIssues) {
     const prAttachment = issue.attachments?.nodes?.find(
@@ -159,14 +157,9 @@ function combineActionableItems(
     }
   }
 
-  // Process PRs
   for (const prData of prs) {
     const linkedLinear = linearByPrUrl.get(prData.pr.html_url);
-
-    // Sort priority: 1 = urgent linear (handled below), 2 = PRs, 3 = in_progress, 4 = todo
-    let sortPriority = 200; // Base PR priority
-
-    // If linked to urgent Linear issue, bump to top
+    let sortPriority = 200;
     if (linkedLinear && linkedLinear.priority === 1) {
       sortPriority = 100 + linkedLinear.priority;
     }
@@ -183,25 +176,21 @@ function combineActionableItems(
     });
   }
 
-  // Process Linear issues not linked to PRs
   for (const issue of linearIssues) {
     const prAttachment = issue.attachments?.nodes?.find(
       (a) => a.url?.includes("github.com") && a.url?.includes("/pull/")
     );
     if (prAttachment?.url && linkedPRUrls.has(prAttachment.url)) {
-      // Already handled with the PR
       continue;
     }
 
-    // Sort priority based on state and Linear priority
-    // 1 = urgent (priority 1), 3 = in_progress, 4 = todo
     let sortPriority: number;
     if (issue.priority === 1) {
-      sortPriority = 100 + issue.priority; // Urgent at top
+      sortPriority = 100 + issue.priority;
     } else if (issue.state.type === "started") {
-      sortPriority = 300 + issue.priority; // In progress
+      sortPriority = 300 + issue.priority;
     } else {
-      sortPriority = 400 + issue.priority; // Todo
+      sortPriority = 400 + issue.priority;
     }
 
     items.push({
@@ -212,13 +201,12 @@ function combineActionableItems(
     });
   }
 
-  // Sort by priority
   items.sort((a, b) => a.sortPriority - b.sortPriority);
-
   return items;
 }
 
 function Dashboard({ user }: { user: User }) {
+  const [githubUser, setGithubUser] = useState<GitHubUser | null>(null);
   const [prResults, setPrResults] = useState<unknown[] | null>(null);
   const [prLoading, setPrLoading] = useState(true);
   const [actionablePRs, setActionablePRs] = useState<ActionablePRData[]>([]);
@@ -229,17 +217,21 @@ function Dashboard({ user }: { user: User }) {
   const supabase = createClient();
 
   useEffect(() => {
+    fetch("/api/github/user")
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data.error) setGithubUser(data);
+      })
+      .catch(() => {});
+
     fetch("/api/github/pull-requests")
       .then((res) => res.json())
       .then((data) => {
         setPrResults(data);
         setPrLoading(false);
       })
-      .catch(() => {
-        setPrLoading(false);
-      });
+      .catch(() => setPrLoading(false));
 
-    // Fetch both actionable PRs and Linear issues
     Promise.all([
       fetch("/api/github/actionable-prs").then((res) => res.json()),
       fetch("/api/linear/issues").then((res) => res.json()),
@@ -260,6 +252,8 @@ function Dashboard({ user }: { user: User }) {
   }, []);
 
   const actionableItems = combineActionableItems(actionablePRs, linearIssues);
+  const activeItems = actionableItems.filter((i) => !i.isDraft);
+  const draftItems = actionableItems.filter((i) => i.isDraft);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -267,96 +261,112 @@ function Dashboard({ user }: { user: User }) {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white shadow">
-        <div className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8 flex justify-between items-center">
-          <h1 className="text-3xl font-bold text-gray-900">Valens Dash</h1>
+    <div className="min-h-screen bg-slate-950">
+      {/* Header */}
+      <header className="border-b border-slate-800">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            {githubUser ? (
+              <>
+                <img
+                  src={githubUser.avatar_url}
+                  alt={githubUser.login}
+                  className="w-10 h-10 rounded-full ring-2 ring-slate-700"
+                />
+                <div>
+                  <h1 className="text-lg font-semibold text-white">
+                    {githubUser.name || githubUser.login}
+                  </h1>
+                  <p className="text-sm text-slate-500">@{githubUser.login}</p>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-full bg-slate-800 animate-pulse" />
+                <div className="space-y-2">
+                  <div className="h-4 w-24 bg-slate-800 rounded animate-pulse" />
+                  <div className="h-3 w-16 bg-slate-800 rounded animate-pulse" />
+                </div>
+              </div>
+            )}
+          </div>
           <button
             onClick={handleSignOut}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+            className="px-4 py-2 text-sm text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
           >
             Sign Out
           </button>
         </div>
       </header>
-      <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <p className="text-gray-600">
-            Welcome, {user.email}
-          </p>
-        </div>
 
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-bold text-gray-900 mb-4">
-            Needs Your Action
+      <main className="max-w-6xl mx-auto px-6 py-8 space-y-8">
+        {/* Needs Action Section */}
+        <section>
+          <div className="flex items-center gap-3 mb-4">
+            <h2 className="text-xl font-semibold text-white">Needs Your Action</h2>
             {!actionableLoading && !actionableError && (
-              <span className="ml-2 text-sm font-normal text-gray-500">
-                ({actionableItems.filter((i) => !i.isDraft).length})
+              <span className="px-2.5 py-0.5 text-xs font-medium bg-amber-500/20 text-amber-400 rounded-full">
+                {activeItems.length}
               </span>
             )}
-          </h2>
+          </div>
+
           {actionableLoading ? (
-            <div className="animate-pulse space-y-3">
-              {[1, 2].map((i) => (
-                <div key={i} className="h-20 bg-gray-200 rounded"></div>
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-20 bg-slate-900 rounded-xl animate-pulse" />
               ))}
             </div>
           ) : actionableError ? (
-            <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+            <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm">
               {actionableError}
             </div>
-          ) : actionableItems.filter((i) => !i.isDraft).length === 0 ? (
-            <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
-              All caught up! Nothing needs your action.
+          ) : activeItems.length === 0 ? (
+            <div className="p-6 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-center">
+              <p className="text-emerald-400 font-medium">All caught up!</p>
+              <p className="text-slate-500 text-sm mt-1">Nothing needs your attention right now.</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {actionableItems
-                .filter((i) => !i.isDraft)
-                .map((item) => (
-                  <ActionableItemCard key={item.pr?.id || item.linearIssue?.id} item={item} />
-                ))}
+              {activeItems.map((item) => (
+                <ActionableItemCard key={item.pr?.id || item.linearIssue?.id} item={item} />
+              ))}
             </div>
           )}
-        </div>
+        </section>
 
-        {!actionableLoading && !actionableError && actionableItems.filter((i) => i.isDraft).length > 0 && (
-          <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">
-              Draft PRs Needing Action
-              <span className="ml-2 text-sm font-normal text-gray-500">
-                ({actionableItems.filter((i) => i.isDraft).length})
+        {/* Draft PRs Section */}
+        {!actionableLoading && !actionableError && draftItems.length > 0 && (
+          <section>
+            <div className="flex items-center gap-3 mb-4">
+              <h2 className="text-xl font-semibold text-white">Drafts</h2>
+              <span className="px-2.5 py-0.5 text-xs font-medium bg-slate-700 text-slate-400 rounded-full">
+                {draftItems.length}
               </span>
-            </h2>
-            <div className="space-y-3">
-              {actionableItems
-                .filter((i) => i.isDraft)
-                .map((item) => (
-                  <ActionableItemCard key={item.pr?.id} item={item} />
-                ))}
             </div>
-          </div>
+            <div className="space-y-3">
+              {draftItems.map((item) => (
+                <ActionableItemCard key={item.pr?.id} item={item} />
+              ))}
+            </div>
+          </section>
         )}
 
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-xl font-bold text-gray-900 mb-4">
-            All Open Pull Requests
-          </h2>
+        {/* All PRs Section */}
+        <section>
+          <h2 className="text-xl font-semibold text-white mb-4">All Open Pull Requests</h2>
           {prLoading ? (
-            <div className="animate-pulse space-y-4">
-              <div className="h-6 bg-gray-200 rounded w-1/4"></div>
-              <div className="space-y-3">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-24 bg-gray-200 rounded"></div>
-                ))}
-              </div>
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-16 bg-slate-900 rounded-xl animate-pulse" />
+              ))}
             </div>
           ) : prResults ? (
             <PullRequestResults results={prResults} />
           ) : (
-            <p className="text-gray-500">Failed to load pull requests</p>
+            <p className="text-slate-500">Failed to load pull requests</p>
           )}
-        </div>
+        </section>
       </main>
     </div>
   );
@@ -367,30 +377,25 @@ function PullRequestResults({ results }: { results: unknown[] }) {
     <div className="space-y-6">
       {results.map((result: any) => (
         <div key={`${result.repository.owner}/${result.repository.repo}`}>
-          <h3 className="text-lg font-semibold text-gray-900 mb-3">
-            <a
-              href={`https://github.com/${result.repository.owner}/${result.repository.repo}/pulls`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:underline"
-            >
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-slate-400 font-medium">
               {result.repository.owner}/{result.repository.repo}
-            </a>
-            <span className="ml-2 text-sm font-normal text-gray-500">
-              ({result.pullRequests.length} open)
             </span>
-          </h3>
+            <span className="text-slate-600 text-sm">
+              {result.pullRequests.length} open
+            </span>
+          </div>
 
           {result.error ? (
-            <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+            <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm">
               {result.error}
             </div>
           ) : result.pullRequests.length === 0 ? (
-            <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg text-gray-500 text-sm">
+            <div className="p-4 bg-slate-900 rounded-xl text-slate-500 text-sm">
               No open pull requests
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {result.pullRequests.map((pr: any) => (
                 <PullRequestCard key={pr.id} pr={pr} />
               ))}
@@ -404,65 +409,32 @@ function PullRequestResults({ results }: { results: unknown[] }) {
 
 function PullRequestCard({ pr }: { pr: any }) {
   const createdAt = new Date(pr.created_at);
-  const daysAgo = Math.floor(
-    (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24)
-  );
+  const daysAgo = Math.floor((Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
 
   return (
-    <div className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors">
-      <div className="flex items-start gap-3">
-        <img
-          src={pr.user.avatar_url}
-          alt={pr.user.login}
-          className="w-8 h-8 rounded-full"
-        />
+    <a
+      href={pr.html_url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="block p-4 bg-slate-900 hover:bg-slate-800 rounded-xl transition-colors group"
+    >
+      <div className="flex items-center gap-3">
+        <img src={pr.user.avatar_url} alt={pr.user.login} className="w-8 h-8 rounded-full" />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <a
-              href={pr.html_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-600 hover:underline font-medium truncate"
-            >
+            <span className="text-white font-medium truncate group-hover:text-blue-400 transition-colors">
               {pr.title}
-            </a>
+            </span>
             {pr.draft && (
-              <span className="px-2 py-0.5 text-xs bg-gray-200 text-gray-600 rounded-full">
-                Draft
-              </span>
+              <span className="px-2 py-0.5 text-xs bg-slate-700 text-slate-400 rounded">Draft</span>
             )}
           </div>
-          <div className="mt-1 text-sm text-gray-500">
-            #{pr.number} opened {daysAgo === 0 ? "today" : `${daysAgo}d ago`} by{" "}
-            <a
-              href={pr.user.html_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:underline"
-            >
-              {pr.user.login}
-            </a>
-          </div>
-          <div className="mt-2 flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-gray-400">
-              {pr.head.ref} → {pr.base.ref}
-            </span>
-            {pr.labels.map((label: any) => (
-              <span
-                key={label.id}
-                className="px-2 py-0.5 text-xs rounded-full"
-                style={{
-                  backgroundColor: `#${label.color}20`,
-                  color: `#${label.color}`,
-                }}
-              >
-                {label.name}
-              </span>
-            ))}
+          <div className="text-sm text-slate-500">
+            #{pr.number} · {daysAgo === 0 ? "today" : `${daysAgo}d ago`} · {pr.user.login}
           </div>
         </div>
       </div>
-    </div>
+    </a>
   );
 }
 
@@ -474,30 +446,26 @@ function ActionableItemCard({ item }: { item: ActionableItem }) {
   if ((item.type === "pr" || item.type === "pr_with_linear") && item.pr) {
     const { pr, prRepository, prReasonLabel, linearIssue } = item;
     const createdAt = new Date(pr.created_at);
-    const daysAgo = Math.floor(
-      (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24)
-    );
+    const daysAgo = Math.floor((Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
 
     return (
-      <div className="border border-orange-200 bg-orange-50 rounded-lg p-4 hover:bg-orange-100 transition-colors">
+      <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl hover:border-slate-700 transition-colors">
         <div className="flex items-start gap-3">
-          <img
-            src={pr.user.avatar_url}
-            alt={pr.user.login}
-            className="w-8 h-8 rounded-full"
-          />
+          <img src={pr.user.avatar_url} alt={pr.user.login} className="w-9 h-9 rounded-full" />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
               <a
                 href={pr.html_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-600 hover:underline font-medium"
+                className="text-white font-medium hover:text-blue-400 transition-colors"
               >
                 {pr.title}
               </a>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
               {prReasonLabel && (
-                <span className="px-2 py-0.5 text-xs bg-orange-500 text-white rounded-full font-medium">
+                <span className="px-2 py-0.5 text-xs font-medium bg-amber-500/20 text-amber-400 rounded">
                   {prReasonLabel}
                 </span>
               )}
@@ -506,29 +474,17 @@ function ActionableItemCard({ item }: { item: ActionableItem }) {
                   href={linearIssue.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-2 py-0.5 text-xs bg-purple-500 text-white rounded-full font-medium hover:bg-purple-600"
+                  className="px-2 py-0.5 text-xs font-medium bg-violet-500/20 text-violet-400 rounded hover:bg-violet-500/30 transition-colors"
                 >
                   {linearIssue.identifier}
                 </a>
               )}
               {pr.draft && (
-                <span className="px-2 py-0.5 text-xs bg-gray-200 text-gray-600 rounded-full">
-                  Draft
-                </span>
+                <span className="px-2 py-0.5 text-xs bg-slate-700 text-slate-400 rounded">Draft</span>
               )}
             </div>
-            <div className="mt-1 text-sm text-gray-600">
-              <span className="text-gray-500">{prRepository?.owner}/{prRepository?.repo}</span>
-              {" · "}
-              #{pr.number} opened {daysAgo === 0 ? "today" : `${daysAgo}d ago`} by{" "}
-              <a
-                href={pr.user.html_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover:underline"
-              >
-                {pr.user.login}
-              </a>
+            <div className="mt-2 text-sm text-slate-500">
+              {prRepository?.owner}/{prRepository?.repo} · #{pr.number} · {daysAgo === 0 ? "today" : `${daysAgo}d ago`} · {pr.user.login}
             </div>
           </div>
         </div>
@@ -540,42 +496,44 @@ function ActionableItemCard({ item }: { item: ActionableItem }) {
 }
 
 function LinearIssueCard({ issue }: { issue: LinearIssueData }) {
-  const priorityColors: Record<number, string> = {
-    1: "bg-red-500", // Urgent
-    2: "bg-orange-500", // High
-    3: "bg-yellow-500", // Medium
-    4: "bg-blue-500", // Low
+  const priorityStyles: Record<number, string> = {
+    1: "bg-red-500/20 text-red-400",
+    2: "bg-orange-500/20 text-orange-400",
+    3: "bg-yellow-500/20 text-yellow-400",
+    4: "bg-blue-500/20 text-blue-400",
   };
 
   const stateLabel = issue.state.type === "started" ? "In Progress" : "To Do";
 
   return (
-    <div className="border border-purple-200 bg-purple-50 rounded-lg p-4 hover:bg-purple-100 transition-colors">
+    <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl hover:border-slate-700 transition-colors">
       <div className="flex items-start gap-3">
-        <div className="w-8 h-8 rounded-full bg-purple-500 flex items-center justify-center text-white text-xs font-bold">
-          {issue.identifier.split("-")[0]?.slice(0, 2) || "LN"}
+        <div className="w-9 h-9 rounded-lg bg-violet-500/20 flex items-center justify-center">
+          <span className="text-violet-400 text-xs font-bold">
+            {issue.identifier.split("-")[0]?.slice(0, 2) || "LN"}
+          </span>
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap mb-1">
             <a
               href={issue.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-600 hover:underline font-medium"
+              className="text-white font-medium hover:text-blue-400 transition-colors"
             >
               {issue.title}
             </a>
-            <span className={`px-2 py-0.5 text-xs text-white rounded-full font-medium ${priorityColors[issue.priority] || "bg-gray-500"}`}>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`px-2 py-0.5 text-xs font-medium rounded ${priorityStyles[issue.priority] || "bg-slate-700 text-slate-400"}`}>
               {issue.priorityLabel || "No Priority"}
             </span>
-            <span className="px-2 py-0.5 text-xs bg-purple-500 text-white rounded-full font-medium">
+            <span className="px-2 py-0.5 text-xs font-medium bg-violet-500/20 text-violet-400 rounded">
               {stateLabel}
             </span>
           </div>
-          <div className="mt-1 text-sm text-gray-600">
-            <span className="text-purple-600 font-medium">{issue.identifier}</span>
-            {" · "}
-            {issue.state.name}
+          <div className="mt-2 text-sm text-slate-500">
+            {issue.identifier} · {issue.state.name}
           </div>
         </div>
       </div>
@@ -606,8 +564,8 @@ export default function Home() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <p className="text-gray-600">Loading...</p>
+      <div className="min-h-screen flex items-center justify-center bg-slate-950">
+        <div className="w-8 h-8 border-2 border-slate-700 border-t-blue-500 rounded-full animate-spin" />
       </div>
     );
   }
