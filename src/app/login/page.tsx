@@ -6,42 +6,36 @@ import { useState, useEffect } from "react";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const router = useRouter();
   const supabase = createClient();
 
-  // Handle invite/magic link tokens in URL hash
   useEffect(() => {
     const handleHashAuth = async () => {
-      // Check if there's a hash with access_token
       const hash = window.location.hash;
       if (hash && hash.includes("access_token")) {
-        // Parse the hash manually
         const params = new URLSearchParams(hash.substring(1));
         const accessToken = params.get("access_token");
         const refreshToken = params.get("refresh_token");
 
         if (accessToken && refreshToken) {
-          // Set the session manually
           const { error } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken,
           });
 
           if (!error) {
-            // Clear the hash from URL
             window.history.replaceState(null, "", window.location.pathname);
-            router.push("/set-password");
+            router.push("/");
             router.refresh();
             return;
           }
         }
       }
 
-      // Check for existing session
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         router.push("/");
@@ -63,23 +57,25 @@ export default function LoginPage() {
     );
   }
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleSendMagicLink = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setMessage(null);
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { error } = await supabase.auth.signInWithOtp({
       email,
-      password,
+      options: {
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
+      },
     });
 
     if (error) {
       setError(error.message);
-      setLoading(false);
     } else {
-      router.push("/");
-      router.refresh();
+      setMessage("Check your email for the magic link!");
     }
+    setLoading(false);
   };
 
   return (
@@ -90,47 +86,36 @@ export default function LoginPage() {
             Valens Dash
           </h1>
           <p className="mt-2 text-center text-sm text-gray-600">
-            Sign in to your account
+            Enter your email to receive a magic link
           </p>
         </div>
 
-        <form className="mt-8 space-y-6" onSubmit={handleLogin}>
+        <form className="mt-8 space-y-6" onSubmit={handleSendMagicLink}>
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded">
               {error}
             </div>
           )}
 
-          <div className="space-y-4">
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                placeholder="you@example.com"
-              />
+          {message && (
+            <div className="bg-green-50 border border-green-200 text-green-600 px-4 py-3 rounded">
+              {message}
             </div>
+          )}
 
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Your password"
-              />
-            </div>
+          <div>
+            <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+              Email
+            </label>
+            <input
+              id="email"
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              placeholder="you@example.com"
+            />
           </div>
 
           <button
@@ -138,7 +123,7 @@ export default function LoginPage() {
             disabled={loading}
             className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
           >
-            {loading ? "Loading..." : "Sign In"}
+            {loading ? "Sending..." : "Send Magic Link"}
           </button>
         </form>
       </div>
