@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -11,6 +11,28 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const supabase = createClient();
+
+  // Handle magic link / invite tokens in URL hash
+  useEffect(() => {
+    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+    const accessToken = hashParams.get("access_token");
+    const type = hashParams.get("type");
+
+    if (accessToken) {
+      // Session is already set by Supabase, check if user needs to set password
+      supabase.auth.getUser().then(({ data: { user } }) => {
+        if (user) {
+          // For invite/recovery, redirect to set password
+          if (type === "invite" || type === "recovery" || !user.user_metadata?.password_set) {
+            router.push("/set-password");
+          } else {
+            router.push("/");
+          }
+          router.refresh();
+        }
+      });
+    }
+  }, [router, supabase.auth]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
