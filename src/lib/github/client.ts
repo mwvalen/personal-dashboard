@@ -210,8 +210,8 @@ export async function fetchActionablePullRequests(): Promise<ActionablePRsResult
 
         if (isAuthor) {
           // Author conditions
-          if (hasLabel(pr, "fixes_needed")) {
-            reason = "fixes_needed";
+          if (hasLabel(pr, "fix_needed")) {
+            reason = "fix_needed";
             reasonLabel = "Fixes Needed";
           } else if (hasChangesRequested(reviews)) {
             reason = "changes_requested";
@@ -220,18 +220,14 @@ export async function fetchActionablePullRequests(): Promise<ActionablePRsResult
             reason = "has_comments";
             reasonLabel = "Has Review Comments";
           }
-        } else if (isAssigned) {
-          // Non-author conditions (only if assigned)
-          if (hasLabel(pr, "review_ready")) {
-            const userHasReviewed = hasUserReviewed(reviews, username);
-            // Check if user already reviewed and qa_by_dev label exists
-            if (userHasReviewed && hasLabel(pr, "qa_by_dev")) {
-              reason = "qa_needed";
-              reasonLabel = "QA Ready";
-            } else if (!userHasReviewed) {
-              reason = "review_ready";
-              reasonLabel = "Ready for Review";
-            }
+        } else if (isAssigned && !hasLabel(pr, "fix_needed")) {
+          // Non-author conditions (only if assigned and not passed back to dev)
+          // Priority: review first, then QA
+          const userHasReviewed = hasUserReviewed(reviews, username);
+
+          if (hasLabel(pr, "review_ready") && !userHasReviewed) {
+            reason = "review_ready";
+            reasonLabel = "Review Needed";
           } else if (
             hasLabel(pr, "review_ongoing") &&
             isRequestedReviewer(pr, username)
@@ -239,9 +235,8 @@ export async function fetchActionablePullRequests(): Promise<ActionablePRsResult
             reason = "review_ongoing";
             reasonLabel = "Review In Progress";
           } else if (
-            hasLabel(pr, "qa_by_done") &&
-            !hasLabel(pr, "qa_done") &&
-            !hasLabel(pr, "fixes_needed")
+            (hasLabel(pr, "qa_by_dev") || hasLabel(pr, "qa_by_done")) &&
+            !hasLabel(pr, "qa_done")
           ) {
             reason = "qa_needed";
             reasonLabel = "QA Needed";

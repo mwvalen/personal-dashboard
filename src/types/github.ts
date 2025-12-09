@@ -57,7 +57,7 @@ export type ActionReason =
   | "review_ready"
   | "review_ongoing"
   | "qa_needed"
-  | "fixes_needed"
+  | "fix_needed"
   | "changes_requested"
   | "has_comments";
 
