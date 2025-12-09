@@ -4,18 +4,16 @@ A personal productivity dashboard that aggregates GitHub pull requests and Linea
 
 ## Features
 
-- **GitHub Integration**: Monitor open PRs across repositories, with smart filtering for "actionable" PRs (ones needing your review or attention)
+- **GitHub Integration**: Monitor open PRs across repositories, with smart filtering for "actionable" PRs
 - **Linear Integration**: View assigned issues with priority and status
-- **Magic Link Auth**: Passwordless authentication via Supabase
+- **Magic Link Auth**: Passwordless authentication via Supabase (optional)
+- **Daily Digest**: Slack notifications with your daily status (optional)
 
-## Prerequisites
+---
 
-- Node.js 18+
-- A [Supabase](https://supabase.com) account
-- A [GitHub](https://github.com) account
-- A [Linear](https://linear.app) account
+## Quick Start: Local Development
 
-## Setup
+The fastest way to get started. No Supabase or Vercel required.
 
 ### 1. Clone and Install
 
@@ -25,87 +23,159 @@ cd personal-dashboard
 npm install
 ```
 
-### 2. Supabase Setup
+### 2. Get API Keys
 
-1. Create a new project at [supabase.com](https://supabase.com)
-2. Go to **Settings > API** and copy:
-   - Project URL
-   - anon/public key
-3. Go to **Authentication > URL Configuration** and add to "Redirect URLs":
-   - `http://localhost:3000/auth/callback`
-4. Ensure **Email** provider is enabled under **Authentication > Providers**
-
-### 3. GitHub Setup
-
-1. Go to [GitHub Settings > Developer Settings > Personal Access Tokens > Tokens (classic)](https://github.com/settings/tokens)
+**GitHub:**
+1. Go to [GitHub Settings > Developer Settings > Personal Access Tokens](https://github.com/settings/tokens)
 2. Click "Generate new token (classic)"
-3. Select the `repo` scope (needed to read PR data from private repos)
-4. Copy the generated token
+3. Select the `repo` scope
+4. Copy the token
 
-### 4. Linear Setup
-
-1. Go to [Linear Settings > Account > API](https://linear.app/settings/api)
+**Linear:**
+1. Go to [Linear Settings > API](https://linear.app/settings/api)
 2. Click "Create key"
-3. Copy the generated API key
+3. Copy the key
 
-### 5. Environment Variables
+### 3. Create Environment File
 
-Create a `.env.local` file in the project root:
-
+```bash
+cp .env.example .env.local
 ```
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+
+Edit `.env.local` with just your API keys:
+
+```env
 GITHUB_PAT=ghp_your-github-token
 LINEAR_API_KEY=lin_api_your-linear-key
 ```
 
-## Running Locally
+### 4. Run
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open [http://localhost:3000](http://localhost:3000) - the dashboard loads directly without login.
 
-## Configuration
+### 5. Configure Repositories
 
-### Monitored Repositories
+Edit `src/lib/github/client.ts` and update the `MONITORED_REPOS` array to watch your repositories.
 
-To change which GitHub repositories are monitored, edit `src/lib/github/client.ts` and update the `MONITORED_REPOS` array.
+---
+
+## Production Deployment with Supabase Auth
+
+Add authentication so only you can access the dashboard.
+
+### 1. Create Supabase Project
+
+1. Create a project at [supabase.com](https://supabase.com)
+2. Go to **Settings > API** and copy:
+   - Project URL
+   - anon/public key
+3. Go to **Authentication > URL Configuration** and add:
+   - `http://localhost:3000/auth/callback`
+4. Ensure **Email** provider is enabled under **Authentication > Providers**
+
+### 2. Update Environment Variables
+
+Add Supabase variables to your `.env.local`:
+
+```env
+GITHUB_PAT=ghp_your-github-token
+LINEAR_API_KEY=lin_api_your-linear-key
+
+# Add these for auth
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+```
+
+### 3. Deploy to Vercel
+
+1. Go to [vercel.com](https://vercel.com) and import your repository
+2. Add environment variables in project settings:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `GITHUB_PAT`
+   - `LINEAR_API_KEY`
+3. Deploy
+
+### 4. Update Supabase Redirect URLs
+
+Add your Vercel URL to Supabase:
+
+1. Go to **Authentication > URL Configuration**
+2. Add to "Redirect URLs":
+   - `https://your-project.vercel.app/auth/callback`
+
+---
+
+## Optional: Daily Digest Slack Notifications
+
+Get a daily summary of your PRs and Linear issues in Slack.
+
+### 1. Create Slack Webhook
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps)
+2. Create a new app (or use existing)
+3. Enable **Incoming Webhooks**
+4. Create a webhook for your channel
+5. Copy the webhook URL
+
+### 2. Add Environment Variables
+
+In Vercel project settings, add:
+
+```
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T.../B.../...
+CRON_SECRET=<generate with: openssl rand -hex 32>
+```
+
+### 3. Deploy
+
+The cron job is configured in `vercel.json` to run daily at 8am ET. After deploying, you can:
+
+- View cron status: Vercel Dashboard > Settings > Cron Jobs
+- Manually trigger: Click "Run" on the cron job
+- Check logs: Vercel Dashboard > Deployments > Functions
+
+### Daily Digest Format
+
+```
+Daily Status Report
+───────────────────
+PRs Needing Action: 2
+• #123: Fix bug — Changes Requested
+• #456: Add feature — Review Ready
+───────────────────
+Linear Issues: 35 total
+• In Progress: 14
+• To Do: 21
+───────────────────
+[View Dashboard]
+```
+
+---
 
 ## Scripts
 
-- `npm run dev` - Start development server
-- `npm run build` - Build for production
-- `npm run start` - Start production server
-- `npm run lint` - Run ESLint
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start development server |
+| `npm run build` | Build for production |
+| `npm run start` | Start production server |
+| `npm run lint` | Run ESLint |
 
-## Deploying to Vercel
+---
 
-### 1. Connect Repository
+## Environment Variables Reference
 
-1. Go to [vercel.com](https://vercel.com) and sign in
-2. Click "Add New Project"
-3. Import your GitHub repository
-
-### 2. Configure Environment Variables
-
-In the Vercel project settings, add the following environment variables:
-
-- `NEXT_PUBLIC_SUPABASE_URL` - Your Supabase project URL
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY` - Your Supabase anon key
-- `GITHUB_PAT` - Your GitHub personal access token
-- `LINEAR_API_KEY` - Your Linear API key
-
-### 3. Update Supabase Redirect URLs
-
-Add your Vercel deployment URL to Supabase:
-
-1. Go to **Authentication > URL Configuration** in your Supabase dashboard
-2. Add to "Redirect URLs":
-   - `https://your-project.vercel.app/auth/callback`
-   - If using a custom domain: `https://your-domain.com/auth/callback`
-
-### 4. Deploy
-
-Vercel will automatically deploy on every push to main. You can also trigger manual deploys from the Vercel dashboard.
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GITHUB_PAT` | Yes | GitHub Personal Access Token with `repo` scope |
+| `LINEAR_API_KEY` | Yes | Linear API key |
+| `NEXT_PUBLIC_SUPABASE_URL` | For auth | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | For auth | Supabase anon key |
+| `SLACK_WEBHOOK_URL` | For digest | Slack incoming webhook URL |
+| `CRON_SECRET` | For digest | Secret to secure cron endpoint |
+| `SUPABASE_SERVICE_KEY` | For digest | Supabase service role key |
