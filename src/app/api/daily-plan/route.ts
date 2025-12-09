@@ -18,6 +18,7 @@ interface ActionableItemInput {
   };
   prRepository?: { owner: string; repo: string };
   prReasonLabel?: string;
+  prReviewComments?: Array<{ body: string; user: { login: string }; created_at: string }>;
   linearIssue?: {
     id: string;
     identifier: string;
@@ -80,6 +81,11 @@ export async function POST(request: Request) {
         prCommits: item.pr?.commits,
         prComments: item.pr?.comments,
         prReviewComments: item.pr?.review_comments,
+        // Include actual review comment content for "Has Review Comments" PRs
+        reviewCommentsContent: item.prReviewComments?.slice(0, 10).map(c => ({
+          body: truncate(c.body, 300),
+          user: c.user.login,
+        })),
         linearIdentifier: item.linearIssue?.identifier,
         linearPriority: item.linearIssue?.priorityLabel,
         linearState: item.linearIssue?.state?.name,

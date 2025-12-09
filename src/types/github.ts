@@ -74,6 +74,7 @@ export interface ActionablePR {
   repository: Repository;
   reason: ActionReason;
   reasonLabel: string;
+  reviewComments?: Array<{ body: string; user: { login: string }; created_at: string }>;
 }
 
 export interface ActionablePRsResult {

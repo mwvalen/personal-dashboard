@@ -89,6 +89,16 @@ class GitHubClient {
       `/repos/${owner}/${repo}/pulls/${prNumber}`
     );
   }
+
+  async getPullRequestReviewComments(
+    owner: string,
+    repo: string,
+    prNumber: number
+  ): Promise<Array<{ body: string; user: { login: string }; created_at: string }>> {
+    return this.fetch<Array<{ body: string; user: { login: string }; created_at: string }>>(
+      `/repos/${owner}/${repo}/pulls/${prNumber}/comments?per_page=50`
+    );
+  }
 }
 
 function createGitHubClient(): GitHubClient | null {
@@ -164,10 +174,24 @@ function hasChangesRequested(reviews: GitHubReview[]): boolean {
   );
 }
 
-function hasReviewComments(reviews: GitHubReview[]): boolean {
-  return reviews.some(
-    (r) => r.state === "COMMENTED" || r.state === "CHANGES_REQUESTED"
-  );
+function hasUnaddressedReviewComments(reviews: GitHubReview[], pr: GitHubPullRequest): boolean {
+  // Filter out bot reviews
+  const humanReviews = reviews.filter(r => !r.user.login.endsWith("[bot]") && !r.user.login.includes("bot"));
+
+  // Get reviewers who left comments or requested changes
+  const reviewersWithComments = humanReviews
+    .filter(r => r.state === "COMMENTED" || r.state === "CHANGES_REQUESTED")
+    .map(r => r.user.login.toLowerCase());
+
+  if (reviewersWithComments.length === 0) return false;
+
+  // If any of those reviewers are in requested_reviewers, it means author
+  // has addressed comments and re-requested review - so comments are addressed
+  const pendingReviewers = new Set(pr.requested_reviewers.map(r => r.login.toLowerCase()));
+
+  // Comments are unaddressed if reviewer is NOT waiting to re-review
+  // (i.e., they left comments and author hasn't re-requested their review yet)
+  return reviewersWithComments.some(reviewer => !pendingReviewers.has(reviewer));
 }
 
 function hasUserReviewed(reviews: GitHubReview[], username: string): boolean {
@@ -226,7 +250,7 @@ export async function fetchActionablePullRequests(): Promise<ActionablePRsResult
           } else if (hasChangesRequested(reviews)) {
             reason = "changes_requested";
             reasonLabel = "Changes Requested";
-          } else if (hasReviewComments(reviews) && !hasLabel(pr, "review_done")) {
+          } else if (hasUnaddressedReviewComments(reviews, pr) && !hasLabel(pr, "review_done")) {
             reason = "has_comments";
             reasonLabel = "Has Review Comments";
           }
@@ -262,11 +286,26 @@ export async function fetchActionablePullRequests(): Promise<ActionablePRsResult
             console.error(`Failed to fetch details for PR #${pr.number}:`, e);
           }
 
+          // Fetch review comments for "has_comments" PRs so AI can estimate based on actual comments
+          let reviewComments: Array<{ body: string; user: { login: string }; created_at: string }> | undefined;
+          if (reason === "has_comments") {
+            try {
+              const allComments = await client.getPullRequestReviewComments(repo.owner, repo.repo, pr.number);
+              // Filter out bot comments
+              reviewComments = allComments.filter(c =>
+                !c.user.login.endsWith("[bot]") && !c.user.login.includes("bot")
+              );
+            } catch (e) {
+              console.error(`Failed to fetch review comments for PR #${pr.number}:`, e);
+            }
+          }
+
           actionablePRs.push({
             pr: detailedPr,
             repository: repo,
             reason,
             reasonLabel,
+            reviewComments,
           });
         }
       }

@@ -12,6 +12,7 @@ interface TaskItem {
   prCommits?: number;
   prComments?: number;
   prReviewComments?: number;
+  reviewCommentsContent?: Array<{ body?: string; user: string }>;
   linearIdentifier?: string;
   linearPriority?: string;
   linearState?: string;
@@ -55,6 +56,13 @@ export async function estimateEffort(items: TaskItem[]): Promise<EstimatedItem[]
         }
         if (item.prComments || item.prReviewComments) {
           parts.push(`Discussion: ${item.prComments ?? 0} comments, ${item.prReviewComments ?? 0} review comments`);
+        }
+        // Include actual review comment content for "Has Review Comments" PRs
+        if (item.reviewCommentsContent && item.reviewCommentsContent.length > 0) {
+          const commentsText = item.reviewCommentsContent
+            .map(c => `  - ${c.user}: "${c.body}"`)
+            .join("\n");
+          parts.push(`Review comments to address:\n${commentsText}`);
         }
         if (item.prBody) {
           parts.push(`PR description: ${item.prBody}`);
@@ -100,8 +108,16 @@ Guidelines for PR reviews (use diff stats as primary signal):
 - Medium (400-1000 lines, 8-15 files): 0.5h
 - Large (1000-2000 lines, 15-30 files): 1h
 - Very large (>2000 lines or >30 files): 2h
-- Add time for: many review comments (discussion needed), "Changes Requested" (re-review), complex domains
+- Add time for: "Changes Requested" (re-review), complex domains
 - Reduce time for: simple refactors, config changes, test-only changes, React components, styling
+
+Guidelines for "Has Review Comments" PRs (responding to reviewer feedback):
+- This is usually QUICK - just addressing feedback, not full review
+- Read the actual review comments provided and estimate based on their complexity
+- Simple comments (typos, naming, small tweaks): 0.5h total
+- Medium comments (logic changes, refactors): 0.5-1h
+- Complex comments (architectural changes, rethink approach): 1-2h
+- Default to 0.5h unless comments clearly require significant work
 
 Guidelines for Linear issues:
 - If story points provided: 1pt=0.5h, 2pt=1h, 3pt=2h, 5pt=4h, 8pt=8h
@@ -210,8 +226,12 @@ function getDefaultEstimate(item: TaskItem): { hours: number; reasoning: string 
     }
 
     // Adjust for action type
+    if (item.reason?.includes("Has Review Comments")) {
+      // Responding to review comments is usually quick
+      return { hours: 0.5, reasoning: "Addressing review feedback" };
+    }
     if (item.reason?.includes("Changes") || item.reason?.includes("Fix")) {
-      hours = Math.min(hours + 1, 8);
+      hours = Math.min(hours + 0.5, 4);
       reasoning = `Changes requested - ${reasoning}`;
     }
 
