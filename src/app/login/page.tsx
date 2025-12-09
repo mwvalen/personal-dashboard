@@ -9,30 +9,59 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
   const router = useRouter();
   const supabase = createClient();
 
   // Handle invite/magic link tokens in URL hash
   useEffect(() => {
-    // getSession() triggers Supabase to parse the URL hash and set the session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    const handleHashAuth = async () => {
+      // Check if there's a hash with access_token
+      const hash = window.location.hash;
+      if (hash && hash.includes("access_token")) {
+        // Parse the hash manually
+        const params = new URLSearchParams(hash.substring(1));
+        const accessToken = params.get("access_token");
+        const refreshToken = params.get("refresh_token");
+
+        if (accessToken && refreshToken) {
+          // Set the session manually
+          const { error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+
+          if (!error) {
+            // Clear the hash from URL
+            window.history.replaceState(null, "", window.location.pathname);
+            router.push("/set-password");
+            router.refresh();
+            return;
+          }
+        }
+      }
+
+      // Check for existing session
+      const { data: { session } } = await supabase.auth.getSession();
       if (session) {
-        // User is authenticated (from invite link)
-        router.push("/set-password");
+        router.push("/");
         router.refresh();
+        return;
       }
-    });
 
-    // Listen for auth state changes (backup for async hash parsing)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === "SIGNED_IN" && session) {
-        router.push("/set-password");
-        router.refresh();
-      }
-    });
+      setCheckingAuth(false);
+    };
 
-    return () => subscription.unsubscribe();
+    handleHashAuth();
   }, [router, supabase.auth]);
+
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <p className="text-gray-600">Loading...</p>
+      </div>
+    );
+  }
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
