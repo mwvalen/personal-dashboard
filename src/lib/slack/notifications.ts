@@ -11,17 +11,6 @@ interface SlackBlock {
   }>;
 }
 
-function getReasonEmoji(reason: string): string {
-  const emojiMap: Record<string, string> = {
-    review_ready: ":eyes:",
-    review_ongoing: ":hourglass_flowing_sand:",
-    qa_needed: ":test_tube:",
-    fixes_needed: ":wrench:",
-    changes_requested: ":memo:",
-    has_comments: ":speech_balloon:",
-  };
-  return emojiMap[reason] || ":bell:";
-}
 
 interface DailyDigestParams {
   actionablePRs: ActionablePR[];

@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export default function SetPasswordPage() {
   const [password, setPassword] = useState("");
@@ -12,8 +12,17 @@ export default function SetPasswordPage() {
   const router = useRouter();
   const supabase = createClient();
 
+  // Dev mode: redirect home if Supabase is not configured
+  useEffect(() => {
+    if (!supabase) {
+      router.push("/");
+    }
+  }, [supabase, router]);
+
   const handleSetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!supabase) return;
+
     setLoading(true);
     setError(null);
 

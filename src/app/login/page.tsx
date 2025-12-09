@@ -14,6 +14,12 @@ export default function LoginPage() {
   const supabase = createClient();
 
   useEffect(() => {
+    // Dev mode: redirect to home if Supabase is not configured
+    if (!supabase) {
+      router.push("/");
+      return;
+    }
+
     const handleHashAuth = async () => {
       const hash = window.location.hash;
       if (hash && hash.includes("access_token")) {
@@ -47,7 +53,7 @@ export default function LoginPage() {
     };
 
     handleHashAuth();
-  }, [router, supabase.auth]);
+  }, [router, supabase]);
 
   if (checkingAuth) {
     return (
@@ -59,6 +65,8 @@ export default function LoginPage() {
 
   const handleSendMagicLink = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!supabase) return;
+
     setLoading(true);
     setError(null);
     setMessage(null);

@@ -10,6 +10,11 @@ export async function GET(request: Request) {
 
   const supabase = await createClient();
 
+  // Dev mode: redirect home if Supabase is not configured
+  if (!supabase) {
+    return NextResponse.redirect(`${origin}/`);
+  }
+
   // Handle invite/recovery links (token_hash based)
   if (token_hash && type) {
     const { error } = await supabase.auth.verifyOtp({

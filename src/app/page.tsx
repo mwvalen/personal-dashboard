@@ -21,6 +21,8 @@ function MagicLinkForm() {
 
   const handleSendMagicLink = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!supabase) return;
+
     setLoading(true);
     setError(null);
     setMessage(null);
@@ -212,7 +214,7 @@ function combineActionableItems(
   return items;
 }
 
-function Dashboard(_props: { user: User }) {
+function Dashboard(_: { user: User }) {
   const [githubUser, setGithubUser] = useState<GitHubUser | null>(null);
   const [prResults, setPrResults] = useState<PRResult[] | null>(null);
   const [prLoading, setPrLoading] = useState(true);
@@ -266,7 +268,9 @@ function Dashboard(_props: { user: User }) {
   const draftItems = actionableItems.filter((i) => i.isDraft);
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
     router.refresh();
   };
 
@@ -552,18 +556,14 @@ function LinearIssueCard({ issue }: { issue: LinearIssueData }) {
 }
 
 export default function Home() {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
   const supabase = createClient();
-
-  // Dev mode: if Supabase is not configured, skip auth
   const isDevMode = !supabase;
 
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(!isDevMode);
+
   useEffect(() => {
-    if (isDevMode) {
-      setLoading(false);
-      return;
-    }
+    if (!supabase) return;
 
     const checkUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -578,7 +578,7 @@ export default function Home() {
     });
 
     return () => subscription.unsubscribe();
-  }, [supabase, isDevMode]);
+  }, [supabase]);
 
   if (loading) {
     return (
