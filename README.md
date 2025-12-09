@@ -1,36 +1,111 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Personal Dashboard
 
-## Getting Started
+A personal productivity dashboard that aggregates GitHub pull requests and Linear issues into a single view, highlighting items that need your attention.
 
-First, run the development server:
+## Features
+
+- **GitHub Integration**: Monitor open PRs across repositories, with smart filtering for "actionable" PRs (ones needing your review or attention)
+- **Linear Integration**: View assigned issues with priority and status
+- **Magic Link Auth**: Passwordless authentication via Supabase
+
+## Prerequisites
+
+- Node.js 18+
+- A [Supabase](https://supabase.com) account
+- A [GitHub](https://github.com) account
+- A [Linear](https://linear.app) account
+
+## Setup
+
+### 1. Clone and Install
+
+```bash
+git clone <repo-url>
+cd personal-dashboard
+npm install
+```
+
+### 2. Supabase Setup
+
+1. Create a new project at [supabase.com](https://supabase.com)
+2. Go to **Settings > API** and copy:
+   - Project URL
+   - anon/public key
+3. Go to **Authentication > URL Configuration** and add to "Redirect URLs":
+   - `http://localhost:3000/auth/callback`
+4. Ensure **Email** provider is enabled under **Authentication > Providers**
+
+### 3. GitHub Setup
+
+1. Go to [GitHub Settings > Developer Settings > Personal Access Tokens > Tokens (classic)](https://github.com/settings/tokens)
+2. Click "Generate new token (classic)"
+3. Select the `repo` scope (needed to read PR data from private repos)
+4. Copy the generated token
+
+### 4. Linear Setup
+
+1. Go to [Linear Settings > Account > API](https://linear.app/settings/api)
+2. Click "Create key"
+3. Copy the generated API key
+
+### 5. Environment Variables
+
+Create a `.env.local` file in the project root:
+
+```
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+GITHUB_PAT=ghp_your-github-token
+LINEAR_API_KEY=lin_api_your-linear-key
+```
+
+## Running Locally
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Configuration
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Monitored Repositories
 
-## Learn More
+To change which GitHub repositories are monitored, edit `src/lib/github/client.ts` and update the `MONITORED_REPOS` array.
 
-To learn more about Next.js, take a look at the following resources:
+## Scripts
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `npm run dev` - Start development server
+- `npm run build` - Build for production
+- `npm run start` - Start production server
+- `npm run lint` - Run ESLint
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Deploying to Vercel
 
-## Deploy on Vercel
+### 1. Connect Repository
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. Go to [vercel.com](https://vercel.com) and sign in
+2. Click "Add New Project"
+3. Import your GitHub repository
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### 2. Configure Environment Variables
+
+In the Vercel project settings, add the following environment variables:
+
+- `NEXT_PUBLIC_SUPABASE_URL` - Your Supabase project URL
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` - Your Supabase anon key
+- `GITHUB_PAT` - Your GitHub personal access token
+- `LINEAR_API_KEY` - Your Linear API key
+
+### 3. Update Supabase Redirect URLs
+
+Add your Vercel deployment URL to Supabase:
+
+1. Go to **Authentication > URL Configuration** in your Supabase dashboard
+2. Add to "Redirect URLs":
+   - `https://your-project.vercel.app/auth/callback`
+   - If using a custom domain: `https://your-domain.com/auth/callback`
+
+### 4. Deploy
+
+Vercel will automatically deploy on every push to main. You can also trigger manual deploys from the Vercel dashboard.
