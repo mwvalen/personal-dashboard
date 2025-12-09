@@ -234,7 +234,7 @@ function combineActionableItems(
   return items;
 }
 
-function Dashboard(_: { user: User }) {
+function Dashboard() {
   const [githubUser, setGithubUser] = useState<GitHubUser | null>(null);
   const [prResults, setPrResults] = useState<PRResult[] | null>(null);
   const [prLoading, setPrLoading] = useState(true);
@@ -243,27 +243,48 @@ function Dashboard(_: { user: User }) {
   const [linearIssues, setLinearIssues] = useState<LinearIssueData[]>([]);
   const [actionableLoading, setActionableLoading] = useState(true);
   const [actionableError, setActionableError] = useState<string | null>(null);
-  const [dailyPlanItems, setDailyPlanItems] = useState<DailyPlanItem[]>([]);
-  const [dailyPlanTotal, setDailyPlanTotal] = useState(0);
+  const [dailyPlanItems, setDailyPlanItems] = useState<DailyPlanItem[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const stored = localStorage.getItem("dailyPlan");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return parsed.items || [];
+      }
+    } catch {
+      // Invalid stored data, ignore
+    }
+    return [];
+  });
+  const [dailyPlanTotal, setDailyPlanTotal] = useState(() => {
+    if (typeof window === "undefined") return 0;
+    try {
+      const stored = localStorage.getItem("dailyPlan");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return parsed.totalHours || 0;
+      }
+    } catch {
+      // Invalid stored data, ignore
+    }
+    return 0;
+  });
   const [dailyPlanLoading, setDailyPlanLoading] = useState(false);
-  const [dailyPlanLastRun, setDailyPlanLastRun] = useState<Date | null>(null);
+  const [dailyPlanLastRun, setDailyPlanLastRun] = useState<Date | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const stored = localStorage.getItem("dailyPlan");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return parsed.lastRun ? new Date(parsed.lastRun) : null;
+      }
+    } catch {
+      // Invalid stored data, ignore
+    }
+    return null;
+  });
   const [showRefreshConfirm, setShowRefreshConfirm] = useState(false);
   const router = useRouter();
-
-  // Load daily plan from localStorage on mount
-  useEffect(() => {
-    const stored = localStorage.getItem("dailyPlan");
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        setDailyPlanItems(parsed.items || []);
-        setDailyPlanTotal(parsed.totalHours || 0);
-        setDailyPlanLastRun(parsed.lastRun ? new Date(parsed.lastRun) : null);
-      } catch {
-        // Invalid stored data, ignore
-      }
-    }
-  }, []);
   const supabase = createClient();
 
   useEffect(() => {
@@ -930,12 +951,12 @@ export default function Home() {
 
   // Dev mode: render dashboard without auth
   if (isDevMode) {
-    return <Dashboard user={null as unknown as User} />;
+    return <Dashboard />;
   }
 
   if (!user) {
     return <MagicLinkForm />;
   }
 
-  return <Dashboard user={user} />;
+  return <Dashboard />;
 }
