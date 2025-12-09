@@ -36,11 +36,10 @@ export async function GET(request: NextRequest) {
       console.error("Failed to fetch Linear issues:", linearResult.error);
     }
 
-    // Get dashboard URL from Vercel env
-    const vercelUrl = process.env.VERCEL_URL;
-    const dashboardUrl = vercelUrl
-      ? `https://${vercelUrl}`
-      : "https://personal-dashboard.vercel.app";
+    // Get dashboard URL - prefer production URL over deployment URL
+    const dashboardUrl = process.env.DASHBOARD_URL
+      || (process.env.VERCEL_PROJECT_PRODUCTION_URL && `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`)
+      || "https://personal-dashboard-iota-three.vercel.app";
 
     // Send daily digest
     const slackResult = await sendDailyDigest({
