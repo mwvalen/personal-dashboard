@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
       await syncActionablePRStates(actionablePRs);
 
     // Send Slack notification for new actionable items
-    let slackResult = { success: true, error: undefined as string | undefined };
+    let slackResult: { success: boolean; error?: string } = { success: true };
     if (newPRs.length > 0) {
       slackResult = await sendSlackNotification(newPRs);
 

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { PullRequestsResult } from "@/types/github";
 import { PullRequestCard } from "./PullRequestCard";
 
@@ -6,6 +7,7 @@ interface PullRequestListProps {
 }
 
 export function PullRequestList({ results }: PullRequestListProps) {
+  const [now] = useState(() => Date.now());
   return (
     <div className="space-y-6">
       {results.map((result) => (
@@ -35,7 +37,7 @@ export function PullRequestList({ results }: PullRequestListProps) {
           ) : (
             <div className="space-y-3">
               {result.pullRequests.map((pr) => (
-                <PullRequestCard key={pr.id} pr={pr} />
+                <PullRequestCard key={pr.id} pr={pr} now={now} />
               ))}
             </div>
           )}

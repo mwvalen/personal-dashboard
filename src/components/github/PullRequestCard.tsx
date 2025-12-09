@@ -2,12 +2,13 @@ import type { GitHubPullRequest } from "@/types/github";
 
 interface PullRequestCardProps {
   pr: GitHubPullRequest;
+  now: number;
 }
 
-export function PullRequestCard({ pr }: PullRequestCardProps) {
+export function PullRequestCard({ pr, now }: PullRequestCardProps) {
   const createdAt = new Date(pr.created_at);
   const daysAgo = Math.floor(
-    (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24)
+    (now - createdAt.getTime()) / (1000 * 60 * 60 * 24)
   );
 
   return (

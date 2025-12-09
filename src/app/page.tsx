@@ -4,6 +4,13 @@ import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import type { User } from "@supabase/supabase-js";
+import type { GitHubPullRequest } from "@/types/github";
+
+interface PRResult {
+  repository: { owner: string; repo: string };
+  pullRequests: GitHubPullRequest[];
+  error?: string;
+}
 
 function MagicLinkForm() {
   const [email, setEmail] = useState("");
@@ -205,11 +212,12 @@ function combineActionableItems(
   return items;
 }
 
-function Dashboard({ user }: { user: User }) {
+function Dashboard(_props: { user: User }) {
   const [githubUser, setGithubUser] = useState<GitHubUser | null>(null);
-  const [prResults, setPrResults] = useState<unknown[] | null>(null);
+  const [prResults, setPrResults] = useState<PRResult[] | null>(null);
   const [prLoading, setPrLoading] = useState(true);
   const [actionablePRs, setActionablePRs] = useState<ActionablePRData[]>([]);
+  const [now, setNow] = useState(Date.now);
   const [linearIssues, setLinearIssues] = useState<LinearIssueData[]>([]);
   const [actionableLoading, setActionableLoading] = useState(true);
   const [actionableError, setActionableError] = useState<string | null>(null);
@@ -229,6 +237,7 @@ function Dashboard({ user }: { user: User }) {
       .then((data) => {
         setPrResults(data);
         setPrLoading(false);
+        setNow(Date.now());
       })
       .catch(() => setPrLoading(false));
 
@@ -244,6 +253,7 @@ function Dashboard({ user }: { user: User }) {
           setLinearIssues(linearData.issues || []);
         }
         setActionableLoading(false);
+        setNow(Date.now());
       })
       .catch(() => {
         setActionableError("Failed to load");
@@ -329,7 +339,7 @@ function Dashboard({ user }: { user: User }) {
           ) : (
             <div className="space-y-3">
               {activeItems.map((item) => (
-                <ActionableItemCard key={item.pr?.id || item.linearIssue?.id} item={item} />
+                <ActionableItemCard key={item.pr?.id || item.linearIssue?.id} item={item} now={now} />
               ))}
             </div>
           )}
@@ -346,7 +356,7 @@ function Dashboard({ user }: { user: User }) {
             </div>
             <div className="space-y-3">
               {draftItems.map((item) => (
-                <ActionableItemCard key={item.pr?.id} item={item} />
+                <ActionableItemCard key={item.pr?.id} item={item} now={now} />
               ))}
             </div>
           </section>
@@ -362,7 +372,7 @@ function Dashboard({ user }: { user: User }) {
               ))}
             </div>
           ) : prResults ? (
-            <PullRequestResults results={prResults} />
+            <PullRequestResults results={prResults} now={now} />
           ) : (
             <p className="text-slate-500">Failed to load pull requests</p>
           )}
@@ -372,10 +382,10 @@ function Dashboard({ user }: { user: User }) {
   );
 }
 
-function PullRequestResults({ results }: { results: unknown[] }) {
+function PullRequestResults({ results, now }: { results: PRResult[]; now: number }) {
   return (
     <div className="space-y-6">
-      {results.map((result: any) => (
+      {results.map((result) => (
         <div key={`${result.repository.owner}/${result.repository.repo}`}>
           <div className="flex items-center gap-2 mb-3">
             <span className="text-slate-400 font-medium">
@@ -396,8 +406,8 @@ function PullRequestResults({ results }: { results: unknown[] }) {
             </div>
           ) : (
             <div className="space-y-2">
-              {result.pullRequests.map((pr: any) => (
-                <PullRequestCard key={pr.id} pr={pr} />
+              {result.pullRequests.map((pr) => (
+                <PullRequestCard key={pr.id} pr={pr} now={now} />
               ))}
             </div>
           )}
@@ -407,9 +417,9 @@ function PullRequestResults({ results }: { results: unknown[] }) {
   );
 }
 
-function PullRequestCard({ pr }: { pr: any }) {
+function PullRequestCard({ pr, now }: { pr: GitHubPullRequest; now: number }) {
   const createdAt = new Date(pr.created_at);
-  const daysAgo = Math.floor((Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
+  const daysAgo = Math.floor((now - createdAt.getTime()) / (1000 * 60 * 60 * 24));
 
   return (
     <a
@@ -438,7 +448,7 @@ function PullRequestCard({ pr }: { pr: any }) {
   );
 }
 
-function ActionableItemCard({ item }: { item: ActionableItem }) {
+function ActionableItemCard({ item, now }: { item: ActionableItem; now: number }) {
   if (item.type === "linear" && item.linearIssue) {
     return <LinearIssueCard issue={item.linearIssue} />;
   }
@@ -446,7 +456,7 @@ function ActionableItemCard({ item }: { item: ActionableItem }) {
   if ((item.type === "pr" || item.type === "pr_with_linear") && item.pr) {
     const { pr, prRepository, prReasonLabel, linearIssue } = item;
     const createdAt = new Date(pr.created_at);
-    const daysAgo = Math.floor((Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
+    const daysAgo = Math.floor((now - createdAt.getTime()) / (1000 * 60 * 60 * 24));
 
     return (
       <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl hover:border-slate-700 transition-colors">
