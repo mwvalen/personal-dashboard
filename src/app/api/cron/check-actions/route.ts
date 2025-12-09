@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchActionablePullRequests } from "@/lib/github/client";
-import {
-  syncActionablePRStates,
-  markAsNotified,
-} from "@/lib/github/pr-state-tracker";
-import { sendSlackNotification } from "@/lib/slack/notifications";
+import { fetchMyLinearIssues } from "@/lib/linear/client";
+import { sendDailyDigest } from "@/lib/slack/notifications";
 
 export async function GET(request: NextRequest) {
   // Verify the request is from Vercel Cron
@@ -25,45 +22,43 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Fetch current actionable PRs from GitHub
-    const { actionablePRs, error: fetchError } =
-      await fetchActionablePullRequests();
+    // Fetch data in parallel
+    const [prResult, linearResult] = await Promise.all([
+      fetchActionablePullRequests(),
+      fetchMyLinearIssues(),
+    ]);
 
-    if (fetchError) {
-      console.error("Failed to fetch actionable PRs:", fetchError);
-      return NextResponse.json(
-        { error: fetchError, processed: false },
-        { status: 500 }
-      );
+    if (prResult.error) {
+      console.error("Failed to fetch actionable PRs:", prResult.error);
     }
 
-    // Sync with database and detect new items
-    const { newPRs, removedCount, updatedCount } =
-      await syncActionablePRStates(actionablePRs);
+    if (linearResult.error) {
+      console.error("Failed to fetch Linear issues:", linearResult.error);
+    }
 
-    // Send Slack notification for new actionable items
-    let slackResult: { success: boolean; error?: string } = { success: true };
-    if (newPRs.length > 0) {
-      slackResult = await sendSlackNotification(newPRs);
+    // Get dashboard URL from Vercel env
+    const vercelUrl = process.env.VERCEL_URL;
+    const dashboardUrl = vercelUrl
+      ? `https://${vercelUrl}`
+      : "https://personal-dashboard.vercel.app";
 
-      if (slackResult.success) {
-        await markAsNotified(
-          newPRs.map((pr) => pr.pr.id),
-          newPRs.map((pr) => pr.reason)
-        );
-      } else {
-        console.error("Failed to send Slack notification:", slackResult.error);
-      }
+    // Send daily digest
+    const slackResult = await sendDailyDigest({
+      actionablePRs: prResult.actionablePRs,
+      linearIssues: linearResult.issues,
+      dashboardUrl,
+    });
+
+    if (!slackResult.success) {
+      console.error("Failed to send Slack notification:", slackResult.error);
     }
 
     return NextResponse.json({
       success: true,
       summary: {
-        totalActionable: actionablePRs.length,
-        newItems: newPRs.length,
-        removedItems: removedCount,
-        updatedItems: updatedCount,
-        slackNotificationSent: slackResult.success && newPRs.length > 0,
+        actionablePRs: prResult.actionablePRs.length,
+        linearIssues: linearResult.issues.length,
+        slackSent: slackResult.success,
         slackError: slackResult.error,
       },
       timestamp: new Date().toISOString(),
@@ -73,7 +68,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Unknown error",
-        processed: false,
       },
       { status: 500 }
     );
