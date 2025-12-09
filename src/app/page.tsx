@@ -122,9 +122,11 @@ interface LinearIssueData {
   id: string;
   identifier: string;
   title: string;
+  description?: string;
   url: string;
   priority: number;
   priorityLabel: string;
+  estimate?: number;
   state: {
     name: string;
     type: string;
@@ -133,6 +135,12 @@ interface LinearIssueData {
   attachments?: {
     nodes: Array<{
       url: string;
+    }>;
+  };
+  comments?: {
+    nodes: Array<{
+      body: string;
+      createdAt: string;
     }>;
   };
 }
@@ -146,6 +154,12 @@ interface ActionableItem {
   prReasonLabel?: string;
   linearIssue?: LinearIssueData;
   isDraft?: boolean;
+  isInReview?: boolean;
+}
+
+interface DailyPlanItem extends ActionableItem {
+  hours: number;
+  reasoning: string;
 }
 
 function combineActionableItems(
@@ -212,6 +226,7 @@ function combineActionableItems(
       sortPriority,
       linearIssue: issue,
       isDraft: false,
+      isInReview: issue.state.name.toLowerCase().includes("review"),
     });
   }
 
@@ -228,7 +243,27 @@ function Dashboard(_: { user: User }) {
   const [linearIssues, setLinearIssues] = useState<LinearIssueData[]>([]);
   const [actionableLoading, setActionableLoading] = useState(true);
   const [actionableError, setActionableError] = useState<string | null>(null);
+  const [dailyPlanItems, setDailyPlanItems] = useState<DailyPlanItem[]>([]);
+  const [dailyPlanTotal, setDailyPlanTotal] = useState(0);
+  const [dailyPlanLoading, setDailyPlanLoading] = useState(false);
+  const [dailyPlanLastRun, setDailyPlanLastRun] = useState<Date | null>(null);
+  const [showRefreshConfirm, setShowRefreshConfirm] = useState(false);
   const router = useRouter();
+
+  // Load daily plan from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem("dailyPlan");
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        setDailyPlanItems(parsed.items || []);
+        setDailyPlanTotal(parsed.totalHours || 0);
+        setDailyPlanLastRun(parsed.lastRun ? new Date(parsed.lastRun) : null);
+      } catch {
+        // Invalid stored data, ignore
+      }
+    }
+  }, []);
   const supabase = createClient();
 
   useEffect(() => {
@@ -269,8 +304,61 @@ function Dashboard(_: { user: User }) {
   }, []);
 
   const actionableItems = combineActionableItems(actionablePRs, linearIssues);
-  const activeItems = actionableItems.filter((i) => !i.isDraft);
+  const activeItems = actionableItems.filter((i) => !i.isDraft && !i.isInReview);
   const draftItems = actionableItems.filter((i) => i.isDraft);
+  const inReviewItems = actionableItems.filter((i) => i.isInReview);
+
+  const isSameDay = (date1: Date, date2: Date) => {
+    return (
+      date1.getFullYear() === date2.getFullYear() &&
+      date1.getMonth() === date2.getMonth() &&
+      date1.getDate() === date2.getDate()
+    );
+  };
+
+  const generateDailyPlan = () => {
+    if (activeItems.length === 0) return;
+
+    setDailyPlanLoading(true);
+    fetch("/api/daily-plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: activeItems }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data.error) {
+          const newLastRun = new Date();
+          setDailyPlanItems(data.items || []);
+          setDailyPlanTotal(data.totalHours || 0);
+          setDailyPlanLastRun(newLastRun);
+          // Persist to localStorage
+          localStorage.setItem(
+            "dailyPlan",
+            JSON.stringify({
+              items: data.items || [],
+              totalHours: data.totalHours || 0,
+              lastRun: newLastRun.toISOString(),
+            })
+          );
+        }
+        setDailyPlanLoading(false);
+      })
+      .catch(() => setDailyPlanLoading(false));
+  };
+
+  const handleGenerateClick = () => {
+    if (dailyPlanLastRun && isSameDay(dailyPlanLastRun, new Date())) {
+      setShowRefreshConfirm(true);
+    } else {
+      generateDailyPlan();
+    }
+  };
+
+  const confirmRefresh = () => {
+    setShowRefreshConfirm(false);
+    generateDailyPlan();
+  };
 
   const handleSignOut = async () => {
     if (supabase) {
@@ -346,11 +434,36 @@ function Dashboard(_: { user: User }) {
               <p className="text-slate-500 text-sm mt-1">Nothing needs your attention right now.</p>
             </div>
           ) : (
-            <div className="space-y-3">
-              {activeItems.map((item) => (
-                <ActionableItemCard key={item.pr?.id || item.linearIssue?.id} item={item} now={now} />
-              ))}
-            </div>
+            <>
+              <TodaysDashSection
+                items={dailyPlanItems}
+                totalHours={dailyPlanTotal}
+                loading={dailyPlanLoading}
+                lastRun={dailyPlanLastRun}
+                onGenerate={handleGenerateClick}
+                now={now}
+                showConfirm={showRefreshConfirm}
+                onConfirm={confirmRefresh}
+                onCancelConfirm={() => setShowRefreshConfirm(false)}
+                disabled={activeItems.length === 0}
+              />
+              {(() => {
+                // Filter out items already shown in Today's Dash
+                const dailyPlanIds = new Set(
+                  dailyPlanItems.map((item) => item.pr?.id || item.linearIssue?.id)
+                );
+                const remainingItems = activeItems.filter(
+                  (item) => !dailyPlanIds.has(item.pr?.id || item.linearIssue?.id)
+                );
+                return remainingItems.length > 0 ? (
+                  <div className="space-y-3">
+                    {remainingItems.map((item) => (
+                      <ActionableItemCard key={item.pr?.id || item.linearIssue?.id} item={item} now={now} />
+                    ))}
+                  </div>
+                ) : null;
+              })()}
+            </>
           )}
         </section>
 
@@ -366,6 +479,23 @@ function Dashboard(_: { user: User }) {
             <div className="space-y-3">
               {draftItems.map((item) => (
                 <ActionableItemCard key={item.pr?.id} item={item} now={now} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* In Review Section */}
+        {!actionableLoading && !actionableError && inReviewItems.length > 0 && (
+          <section>
+            <div className="flex items-center gap-3 mb-4">
+              <h2 className="text-xl font-semibold text-white">In Review</h2>
+              <span className="px-2.5 py-0.5 text-xs font-medium bg-violet-500/20 text-violet-400 rounded-full">
+                {inReviewItems.length}
+              </span>
+            </div>
+            <div className="space-y-3">
+              {inReviewItems.map((item) => (
+                <ActionableItemCard key={item.linearIssue?.id} item={item} now={now} />
               ))}
             </div>
           </section>
@@ -514,6 +644,210 @@ function ActionableItemCard({ item, now }: { item: ActionableItem; now: number }
   return null;
 }
 
+function TodaysDashSection({
+  items,
+  totalHours,
+  loading,
+  lastRun,
+  onGenerate,
+  now,
+  showConfirm,
+  onConfirm,
+  onCancelConfirm,
+  disabled,
+}: {
+  items: DailyPlanItem[];
+  totalHours: number;
+  loading: boolean;
+  lastRun: Date | null;
+  onGenerate: () => void;
+  now: number;
+  showConfirm: boolean;
+  onConfirm: () => void;
+  onCancelConfirm: () => void;
+  disabled: boolean;
+}) {
+  const formatLastRun = (date: Date) => {
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const month = months[date.getMonth()];
+    const day = date.getDate();
+    const hours = date.getHours();
+    const minutes = date.getMinutes();
+    const ampm = hours >= 12 ? "pm" : "am";
+    const h = hours % 12 || 12;
+    const m = minutes.toString().padStart(2, "0");
+    return `${month} ${day}, ${h}:${m}${ampm}`;
+  };
+
+  return (
+    <div className="relative border border-slate-700 rounded-xl p-4 mb-6">
+      <span className="absolute -top-2.5 left-3 px-2 bg-slate-950 text-xs font-medium text-slate-400 uppercase tracking-wide">
+        Today&apos;s Dash
+      </span>
+
+      {/* Confirmation Modal */}
+      {showConfirm && (
+        <div className="absolute inset-0 bg-slate-950/90 rounded-xl flex items-center justify-center z-10">
+          <div className="text-center p-4">
+            <p className="text-white text-sm mb-3">Already generated today. Refresh?</p>
+            <div className="flex gap-2 justify-center">
+              <button
+                onClick={onCancelConfirm}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={onConfirm}
+                className="px-3 py-1.5 text-xs bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 rounded transition-colors"
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="space-y-3 mt-2">
+          {[1, 2].map((i) => (
+            <div key={i} className="h-16 bg-slate-900 rounded-lg animate-pulse" />
+          ))}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="mt-2 py-6 text-center">
+          <p className="text-slate-500 text-sm mb-3">Scope your day with AI-estimated effort</p>
+          <button
+            onClick={onGenerate}
+            disabled={disabled}
+            className="px-4 py-2 text-sm bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Generate Today&apos;s Dash
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="space-y-3 mt-2">
+            {items.map((item) => (
+              <DailyPlanItemCard key={item.pr?.id || item.linearIssue?.id} item={item} now={now} />
+            ))}
+          </div>
+          <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {lastRun && (
+                <span className="text-xs text-slate-500">
+                  Generated at {formatLastRun(lastRun)}
+                </span>
+              )}
+              <button
+                onClick={onGenerate}
+                disabled={loading}
+                className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                ↻ Refresh
+              </button>
+            </div>
+            <span className="text-sm text-slate-400">
+              Total: <span className="font-medium text-white">{totalHours}h</span>
+            </span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DailyPlanItemCard({ item, now }: { item: DailyPlanItem; now: number }) {
+  if (item.type === "linear" && item.linearIssue) {
+    const priorityStyles: Record<number, string> = {
+      1: "bg-red-500/20 text-red-400",
+      2: "bg-orange-500/20 text-orange-400",
+      3: "bg-yellow-500/20 text-yellow-400",
+      4: "bg-blue-500/20 text-blue-400",
+    };
+
+    return (
+      <div className="flex items-center gap-3 p-3 bg-slate-900/50 rounded-lg">
+        <div className="w-8 h-8 rounded-md bg-violet-500/20 flex items-center justify-center flex-shrink-0">
+          <span className="text-violet-400 text-xs font-bold">
+            {item.linearIssue.identifier.split("-")[0]?.slice(0, 2) || "LN"}
+          </span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <a
+            href={item.linearIssue.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-white font-medium hover:text-blue-400 transition-colors truncate block"
+          >
+            {item.linearIssue.title}
+          </a>
+          <div className="flex items-center gap-2 mt-1">
+            <span className={`px-1.5 py-0.5 text-xs rounded ${priorityStyles[item.linearIssue.priority] || "bg-slate-700 text-slate-400"}`}>
+              {item.linearIssue.priorityLabel || "No Priority"}
+            </span>
+            <span className="text-xs text-slate-500">{item.linearIssue.identifier}</span>
+          </div>
+        </div>
+        <div className="relative group flex-shrink-0">
+          <div className="px-2 py-1 bg-slate-800 rounded text-xs font-medium text-slate-300 cursor-help">
+            {item.hours}h
+          </div>
+          <div className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-slate-700 text-xs text-slate-200 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
+            {item.reasoning}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if ((item.type === "pr" || item.type === "pr_with_linear") && item.pr) {
+    const createdAt = new Date(item.pr.created_at);
+    const daysAgo = Math.floor((now - createdAt.getTime()) / (1000 * 60 * 60 * 24));
+
+    return (
+      <div className="flex items-center gap-3 p-3 bg-slate-900/50 rounded-lg">
+        <img src={item.pr.user.avatar_url} alt={item.pr.user.login} className="w-8 h-8 rounded-full flex-shrink-0" />
+        <div className="flex-1 min-w-0">
+          <a
+            href={item.pr.html_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-white font-medium hover:text-blue-400 transition-colors truncate block"
+          >
+            {item.pr.title}
+          </a>
+          <div className="flex items-center gap-2 mt-1">
+            {item.prReasonLabel && (
+              <span className="px-1.5 py-0.5 text-xs font-medium bg-amber-500/20 text-amber-400 rounded">
+                {item.prReasonLabel}
+              </span>
+            )}
+            {item.linearIssue && (
+              <span className="px-1.5 py-0.5 text-xs font-medium bg-violet-500/20 text-violet-400 rounded">
+                {item.linearIssue.identifier}
+              </span>
+            )}
+            <span className="text-xs text-slate-500">
+              #{item.pr.number} · {daysAgo === 0 ? "today" : `${daysAgo}d`}
+            </span>
+          </div>
+        </div>
+        <div className="relative group flex-shrink-0">
+          <div className="px-2 py-1 bg-slate-800 rounded text-xs font-medium text-slate-300 cursor-help">
+            {item.hours}h
+          </div>
+          <div className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-slate-700 text-xs text-slate-200 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
+            {item.reasoning}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 function LinearIssueCard({ issue }: { issue: LinearIssueData }) {
   const priorityStyles: Record<number, string> = {
     1: "bg-red-500/20 text-red-400",
@@ -522,7 +856,8 @@ function LinearIssueCard({ issue }: { issue: LinearIssueData }) {
     4: "bg-blue-500/20 text-blue-400",
   };
 
-  const stateLabel = issue.state.type === "started" ? "In Progress" : "To Do";
+  // Use actual state name, fallback to type-based label
+  const stateLabel = issue.state.name || (issue.state.type === "started" ? "In Progress" : "To Do");
 
   return (
     <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl hover:border-slate-700 transition-colors">

@@ -61,9 +61,11 @@ class LinearClient {
               id
               identifier
               title
+              description
               url
               priority
               priorityLabel
+              estimate
               createdAt
               updatedAt
               state {
@@ -74,6 +76,12 @@ class LinearClient {
                 nodes {
                   url
                   sourceType
+                }
+              }
+              comments(first: 10) {
+                nodes {
+                  body
+                  createdAt
                 }
               }
             }

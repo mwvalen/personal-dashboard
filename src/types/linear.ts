@@ -2,9 +2,11 @@ export interface LinearIssue {
   id: string;
   identifier: string;
   title: string;
+  description?: string;
   url: string;
   priority: number; // 0 = no priority, 1 = urgent, 2 = high, 3 = medium, 4 = low
   priorityLabel: string;
+  estimate?: number; // Story points if set
   state: {
     name: string;
     type: string; // "triage" | "backlog" | "unstarted" | "started" | "completed" | "canceled"
@@ -15,6 +17,12 @@ export interface LinearIssue {
     nodes: Array<{
       url: string;
       sourceType?: string;
+    }>;
+  };
+  comments?: {
+    nodes: Array<{
+      body: string;
+      createdAt: string;
     }>;
   };
 }
