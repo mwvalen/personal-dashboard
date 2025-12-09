@@ -12,26 +12,26 @@ export default function LoginPage() {
   const router = useRouter();
   const supabase = createClient();
 
-  // Handle magic link / invite tokens in URL hash
+  // Handle invite/magic link tokens in URL hash
   useEffect(() => {
-    const hashParams = new URLSearchParams(window.location.hash.substring(1));
-    const accessToken = hashParams.get("access_token");
-    const type = hashParams.get("type");
+    // getSession() triggers Supabase to parse the URL hash and set the session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        // User is authenticated (from invite link)
+        router.push("/set-password");
+        router.refresh();
+      }
+    });
 
-    if (accessToken) {
-      // Session is already set by Supabase, check if user needs to set password
-      supabase.auth.getUser().then(({ data: { user } }) => {
-        if (user) {
-          // For invite/recovery, redirect to set password
-          if (type === "invite" || type === "recovery" || !user.user_metadata?.password_set) {
-            router.push("/set-password");
-          } else {
-            router.push("/");
-          }
-          router.refresh();
-        }
-      });
-    }
+    // Listen for auth state changes (backup for async hash parsing)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_IN" && session) {
+        router.push("/set-password");
+        router.refresh();
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, [router, supabase.auth]);
 
   const handleLogin = async (e: React.FormEvent) => {
