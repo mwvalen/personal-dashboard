@@ -31,6 +31,14 @@ export interface GitHubPullRequest {
   base: {
     ref: string;
   };
+  // Detailed stats (from individual PR fetch)
+  body?: string | null;
+  additions?: number;
+  deletions?: number;
+  changed_files?: number;
+  commits?: number;
+  comments?: number;
+  review_comments?: number;
 }
 
 export interface GitHubReview {

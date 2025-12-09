@@ -5,6 +5,13 @@ interface TaskItem {
   description?: string;
   repo?: string;
   prNumber?: number;
+  prBody?: string;
+  prAdditions?: number;
+  prDeletions?: number;
+  prChangedFiles?: number;
+  prCommits?: number;
+  prComments?: number;
+  prReviewComments?: number;
   linearIdentifier?: string;
   linearPriority?: string;
   linearState?: string;
@@ -38,10 +45,24 @@ export async function estimateEffort(items: TaskItem[]): Promise<EstimatedItem[]
         parts.push(`ID: ${item.id}`);
         parts.push(`[PR] "${item.title}"`);
         parts.push(`Repo: ${item.repo}, Action needed: ${item.reason}`);
+        // PR diff stats for complexity assessment
+        if (item.prAdditions !== undefined || item.prDeletions !== undefined) {
+          const additions = item.prAdditions ?? 0;
+          const deletions = item.prDeletions ?? 0;
+          const files = item.prChangedFiles ?? 0;
+          const commits = item.prCommits ?? 0;
+          parts.push(`Diff: +${additions} -${deletions} lines, ${files} files, ${commits} commits`);
+        }
+        if (item.prComments || item.prReviewComments) {
+          parts.push(`Discussion: ${item.prComments ?? 0} comments, ${item.prReviewComments ?? 0} review comments`);
+        }
+        if (item.prBody) {
+          parts.push(`PR description: ${item.prBody}`);
+        }
         if (item.linearIdentifier) {
           parts.push(`Linked Linear: ${item.linearIdentifier} (${item.linearPriority}, ${item.linearState})`);
           if (item.description) {
-            parts.push(`Description: ${item.description}`);
+            parts.push(`Linear description: ${item.description}`);
           }
           if (item.linearEstimate) {
             parts.push(`Story points: ${item.linearEstimate}`);
@@ -73,19 +94,28 @@ export async function estimateEffort(items: TaskItem[]): Promise<EstimatedItem[]
 Given these items with their descriptions and context, estimate hours for each.
 Use only these values: 0.5, 1, 2, 4, or 8.
 
-Guidelines:
-- PR reviews: 0.5-1h for small, 1-2h for medium, 2-4h for large/complex
-- Bug fixes: 1-2h for clear issues, 2-4h for debugging needed, 4-8h for complex
+Guidelines for PR reviews (use diff stats as primary signal):
+- Tiny (<100 lines, 1-3 files): 0.5h
+- Small (100-400 lines, 3-8 files): 0.5h
+- Medium (400-1000 lines, 8-15 files): 0.5h
+- Large (1000-2000 lines, 15-30 files): 1h
+- Very large (>2000 lines or >30 files): 2h
+- Add time for: many review comments (discussion needed), "Changes Requested" (re-review), complex domains
+- Reduce time for: simple refactors, config changes, test-only changes, React components, styling
+
+Guidelines for Linear issues:
+- If story points provided: 1pt=0.5h, 2pt=1h, 3pt=2h, 5pt=4h, 8pt=8h
+- Bug fixes: 1-2h for clear issues, 2-4h for debugging needed
 - New features: Consider scope from description, 2-8h typically
-- If story points are provided, roughly: 1pt=1h, 2pt=2h, 3pt=4h, 5pt=8h
 - "In Progress" items may need less time than "To Do" items
-- Use description and comments to gauge actual complexity
+
+Use description and comments to gauge actual complexity.
 
 Items:
 ${itemDescriptions}
 
 Respond with ONLY a JSON array, no other text. Format: [{"id": "item_id", "hours": 2, "reasoning": "brief 5-10 word reason based on the task details"}, ...]
-Use the IDs exactly as provided. Make reasoning specific to each task.`;
+Use the IDs exactly as provided. Make reasoning specific to each task, referencing diff size or other concrete details.`;
 
   try {
     console.log("Sending to OpenAI, item count:", items.length);
@@ -153,9 +183,39 @@ Use the IDs exactly as provided. Make reasoning specific to each task.`;
 function getDefaultEstimate(item: TaskItem): { hours: number; reasoning: string } {
   // Heuristic defaults when OpenAI is unavailable
   if (item.type === "pr" || item.type === "pr_with_linear") {
-    if (item.reason?.includes("Review")) return { hours: 1, reasoning: "Standard PR review" };
-    if (item.reason?.includes("Changes") || item.reason?.includes("Fix")) return { hours: 2, reasoning: "Code changes requested" };
-    return { hours: 1, reasoning: "PR action needed" };
+    // Use diff stats if available
+    const totalLines = (item.prAdditions ?? 0) + (item.prDeletions ?? 0);
+    const files = item.prChangedFiles ?? 0;
+
+    let hours = 1;
+    let reasoning = "Standard PR review";
+
+    if (totalLines > 0 || files > 0) {
+      if (totalLines < 100 && files <= 3) {
+        hours = 0.5;
+        reasoning = `Tiny PR: ${totalLines} lines, ${files} files`;
+      } else if (totalLines < 400 && files <= 8) {
+        hours = 0.5;
+        reasoning = `Small PR: ${totalLines} lines, ${files} files`;
+      } else if (totalLines < 1000 && files <= 15) {
+        hours = 0.5;
+        reasoning = `Medium PR: ${totalLines} lines, ${files} files`;
+      } else if (totalLines < 2000 && files <= 30) {
+        hours = 1;
+        reasoning = `Large PR: ${totalLines} lines, ${files} files`;
+      } else {
+        hours = 2;
+        reasoning = `Very large PR: ${totalLines} lines, ${files} files`;
+      }
+    }
+
+    // Adjust for action type
+    if (item.reason?.includes("Changes") || item.reason?.includes("Fix")) {
+      hours = Math.min(hours + 1, 8);
+      reasoning = `Changes requested - ${reasoning}`;
+    }
+
+    return { hours, reasoning };
   }
   // Linear issues
   if (item.linearPriority === "Urgent") return { hours: 4, reasoning: "Urgent priority task" };

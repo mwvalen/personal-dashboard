@@ -79,6 +79,16 @@ class GitHubClient {
       `/repos/${owner}/${repo}/pulls/${prNumber}/reviews`
     );
   }
+
+  async getPullRequestDetails(
+    owner: string,
+    repo: string,
+    prNumber: number
+  ): Promise<GitHubPullRequest> {
+    return this.fetch<GitHubPullRequest>(
+      `/repos/${owner}/${repo}/pulls/${prNumber}`
+    );
+  }
 }
 
 function createGitHubClient(): GitHubClient | null {
@@ -244,8 +254,16 @@ export async function fetchActionablePullRequests(): Promise<ActionablePRsResult
         }
 
         if (reason) {
+          // Fetch detailed PR stats for better effort estimation
+          let detailedPr = pr;
+          try {
+            detailedPr = await client.getPullRequestDetails(repo.owner, repo.repo, pr.number);
+          } catch (e) {
+            console.error(`Failed to fetch details for PR #${pr.number}:`, e);
+          }
+
           actionablePRs.push({
-            pr,
+            pr: detailedPr,
             repository: repo,
             reason,
             reasonLabel,

@@ -8,6 +8,13 @@ interface ActionableItemInput {
     number: number;
     title: string;
     html_url: string;
+    body?: string | null;
+    additions?: number;
+    deletions?: number;
+    changed_files?: number;
+    commits?: number;
+    comments?: number;
+    review_comments?: number;
   };
   prRepository?: { owner: string; repo: string };
   prReasonLabel?: string;
@@ -66,6 +73,13 @@ export async function POST(request: Request) {
           ? `${item.prRepository.owner}/${item.prRepository.repo}`
           : undefined,
         prNumber: item.pr?.number,
+        prBody: truncate(item.pr?.body || undefined, 500),
+        prAdditions: item.pr?.additions,
+        prDeletions: item.pr?.deletions,
+        prChangedFiles: item.pr?.changed_files,
+        prCommits: item.pr?.commits,
+        prComments: item.pr?.comments,
+        prReviewComments: item.pr?.review_comments,
         linearIdentifier: item.linearIssue?.identifier,
         linearPriority: item.linearIssue?.priorityLabel,
         linearState: item.linearIssue?.state?.name,
