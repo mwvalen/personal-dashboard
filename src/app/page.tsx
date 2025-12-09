@@ -110,10 +110,119 @@ interface ActionablePRData {
   reasonLabel: string;
 }
 
+interface LinearIssueData {
+  id: string;
+  identifier: string;
+  title: string;
+  url: string;
+  priority: number;
+  priorityLabel: string;
+  state: {
+    name: string;
+    type: string;
+  };
+  createdAt: string;
+  attachments?: {
+    nodes: Array<{
+      url: string;
+    }>;
+  };
+}
+
+interface ActionableItem {
+  type: "pr" | "linear" | "pr_with_linear";
+  sortPriority: number;
+  pr?: ActionablePRData["pr"];
+  prRepository?: ActionablePRData["repository"];
+  prReason?: string;
+  prReasonLabel?: string;
+  linearIssue?: LinearIssueData;
+  isDraft?: boolean;
+}
+
+function combineActionableItems(
+  prs: ActionablePRData[],
+  linearIssues: LinearIssueData[]
+): ActionableItem[] {
+  const items: ActionableItem[] = [];
+  const linkedPRUrls = new Set<string>();
+
+  // Build a map of PR URLs from Linear attachments
+  const linearByPrUrl = new Map<string, LinearIssueData>();
+  for (const issue of linearIssues) {
+    const prAttachment = issue.attachments?.nodes?.find(
+      (a) => a.url?.includes("github.com") && a.url?.includes("/pull/")
+    );
+    if (prAttachment?.url) {
+      linearByPrUrl.set(prAttachment.url, issue);
+      linkedPRUrls.add(prAttachment.url);
+    }
+  }
+
+  // Process PRs
+  for (const prData of prs) {
+    const linkedLinear = linearByPrUrl.get(prData.pr.html_url);
+
+    // Sort priority: 1 = urgent linear (handled below), 2 = PRs, 3 = in_progress, 4 = todo
+    let sortPriority = 200; // Base PR priority
+
+    // If linked to urgent Linear issue, bump to top
+    if (linkedLinear && linkedLinear.priority === 1) {
+      sortPriority = 100 + linkedLinear.priority;
+    }
+
+    items.push({
+      type: linkedLinear ? "pr_with_linear" : "pr",
+      sortPriority,
+      pr: prData.pr,
+      prRepository: prData.repository,
+      prReason: prData.reason,
+      prReasonLabel: prData.reasonLabel,
+      linearIssue: linkedLinear,
+      isDraft: prData.pr.draft,
+    });
+  }
+
+  // Process Linear issues not linked to PRs
+  for (const issue of linearIssues) {
+    const prAttachment = issue.attachments?.nodes?.find(
+      (a) => a.url?.includes("github.com") && a.url?.includes("/pull/")
+    );
+    if (prAttachment?.url && linkedPRUrls.has(prAttachment.url)) {
+      // Already handled with the PR
+      continue;
+    }
+
+    // Sort priority based on state and Linear priority
+    // 1 = urgent (priority 1), 3 = in_progress, 4 = todo
+    let sortPriority: number;
+    if (issue.priority === 1) {
+      sortPriority = 100 + issue.priority; // Urgent at top
+    } else if (issue.state.type === "started") {
+      sortPriority = 300 + issue.priority; // In progress
+    } else {
+      sortPriority = 400 + issue.priority; // Todo
+    }
+
+    items.push({
+      type: "linear",
+      sortPriority,
+      linearIssue: issue,
+      isDraft: false,
+    });
+  }
+
+  // Sort by priority
+  items.sort((a, b) => a.sortPriority - b.sortPriority);
+
+  return items;
+}
+
 function Dashboard({ user }: { user: User }) {
   const [prResults, setPrResults] = useState<unknown[] | null>(null);
   const [prLoading, setPrLoading] = useState(true);
   const [actionablePRs, setActionablePRs] = useState<ActionablePRData[]>([]);
+  const [linearIssues, setLinearIssues] = useState<LinearIssueData[]>([]);
   const [actionableLoading, setActionableLoading] = useState(true);
   const [actionableError, setActionableError] = useState<string | null>(null);
   const router = useRouter();
@@ -130,13 +239,17 @@ function Dashboard({ user }: { user: User }) {
         setPrLoading(false);
       });
 
-    fetch("/api/github/actionable-prs")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.error) {
-          setActionableError(data.error);
+    // Fetch both actionable PRs and Linear issues
+    Promise.all([
+      fetch("/api/github/actionable-prs").then((res) => res.json()),
+      fetch("/api/linear/issues").then((res) => res.json()),
+    ])
+      .then(([prData, linearData]) => {
+        if (prData.error && linearData.error) {
+          setActionableError(`${prData.error}; ${linearData.error}`);
         } else {
-          setActionablePRs(data.actionablePRs || []);
+          setActionablePRs(prData.actionablePRs || []);
+          setLinearIssues(linearData.issues || []);
         }
         setActionableLoading(false);
       })
@@ -145,6 +258,8 @@ function Dashboard({ user }: { user: User }) {
         setActionableLoading(false);
       });
   }, []);
+
+  const actionableItems = combineActionableItems(actionablePRs, linearIssues);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -176,7 +291,7 @@ function Dashboard({ user }: { user: User }) {
             Needs Your Action
             {!actionableLoading && !actionableError && (
               <span className="ml-2 text-sm font-normal text-gray-500">
-                ({actionablePRs.length})
+                ({actionableItems.filter((i) => !i.isDraft).length})
               </span>
             )}
           </h2>
@@ -190,34 +305,34 @@ function Dashboard({ user }: { user: User }) {
             <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
               {actionableError}
             </div>
-          ) : actionablePRs.filter((p) => !p.pr.draft).length === 0 ? (
+          ) : actionableItems.filter((i) => !i.isDraft).length === 0 ? (
             <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
-              All caught up! No PRs need your action.
+              All caught up! Nothing needs your action.
             </div>
           ) : (
             <div className="space-y-3">
-              {actionablePRs
-                .filter((p) => !p.pr.draft)
+              {actionableItems
+                .filter((i) => !i.isDraft)
                 .map((item) => (
-                  <ActionablePRCard key={item.pr.id} item={item} />
+                  <ActionableItemCard key={item.pr?.id || item.linearIssue?.id} item={item} />
                 ))}
             </div>
           )}
         </div>
 
-        {!actionableLoading && !actionableError && actionablePRs.filter((p) => p.pr.draft).length > 0 && (
+        {!actionableLoading && !actionableError && actionableItems.filter((i) => i.isDraft).length > 0 && (
           <div className="bg-white rounded-lg shadow p-6 mb-6">
             <h2 className="text-xl font-bold text-gray-900 mb-4">
               Draft PRs Needing Action
               <span className="ml-2 text-sm font-normal text-gray-500">
-                ({actionablePRs.filter((p) => p.pr.draft).length})
+                ({actionableItems.filter((i) => i.isDraft).length})
               </span>
             </h2>
             <div className="space-y-3">
-              {actionablePRs
-                .filter((p) => p.pr.draft)
+              {actionableItems
+                .filter((i) => i.isDraft)
                 .map((item) => (
-                  <ActionablePRCard key={item.pr.id} item={item} />
+                  <ActionableItemCard key={item.pr?.id} item={item} />
                 ))}
             </div>
           </div>
@@ -351,52 +466,116 @@ function PullRequestCard({ pr }: { pr: any }) {
   );
 }
 
-function ActionablePRCard({ item }: { item: ActionablePRData }) {
-  const { pr, repository, reasonLabel } = item;
-  const createdAt = new Date(pr.created_at);
-  const daysAgo = Math.floor(
-    (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24)
-  );
+function ActionableItemCard({ item }: { item: ActionableItem }) {
+  if (item.type === "linear" && item.linearIssue) {
+    return <LinearIssueCard issue={item.linearIssue} />;
+  }
+
+  if ((item.type === "pr" || item.type === "pr_with_linear") && item.pr) {
+    const { pr, prRepository, prReasonLabel, linearIssue } = item;
+    const createdAt = new Date(pr.created_at);
+    const daysAgo = Math.floor(
+      (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24)
+    );
+
+    return (
+      <div className="border border-orange-200 bg-orange-50 rounded-lg p-4 hover:bg-orange-100 transition-colors">
+        <div className="flex items-start gap-3">
+          <img
+            src={pr.user.avatar_url}
+            alt={pr.user.login}
+            className="w-8 h-8 rounded-full"
+          />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <a
+                href={pr.html_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:underline font-medium"
+              >
+                {pr.title}
+              </a>
+              {prReasonLabel && (
+                <span className="px-2 py-0.5 text-xs bg-orange-500 text-white rounded-full font-medium">
+                  {prReasonLabel}
+                </span>
+              )}
+              {linearIssue && (
+                <a
+                  href={linearIssue.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2 py-0.5 text-xs bg-purple-500 text-white rounded-full font-medium hover:bg-purple-600"
+                >
+                  {linearIssue.identifier}
+                </a>
+              )}
+              {pr.draft && (
+                <span className="px-2 py-0.5 text-xs bg-gray-200 text-gray-600 rounded-full">
+                  Draft
+                </span>
+              )}
+            </div>
+            <div className="mt-1 text-sm text-gray-600">
+              <span className="text-gray-500">{prRepository?.owner}/{prRepository?.repo}</span>
+              {" · "}
+              #{pr.number} opened {daysAgo === 0 ? "today" : `${daysAgo}d ago`} by{" "}
+              <a
+                href={pr.user.html_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:underline"
+              >
+                {pr.user.login}
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function LinearIssueCard({ issue }: { issue: LinearIssueData }) {
+  const priorityColors: Record<number, string> = {
+    1: "bg-red-500", // Urgent
+    2: "bg-orange-500", // High
+    3: "bg-yellow-500", // Medium
+    4: "bg-blue-500", // Low
+  };
+
+  const stateLabel = issue.state.type === "started" ? "In Progress" : "To Do";
 
   return (
-    <div className="border border-orange-200 bg-orange-50 rounded-lg p-4 hover:bg-orange-100 transition-colors">
+    <div className="border border-purple-200 bg-purple-50 rounded-lg p-4 hover:bg-purple-100 transition-colors">
       <div className="flex items-start gap-3">
-        <img
-          src={pr.user.avatar_url}
-          alt={pr.user.login}
-          className="w-8 h-8 rounded-full"
-        />
+        <div className="w-8 h-8 rounded-full bg-purple-500 flex items-center justify-center text-white text-xs font-bold">
+          {issue.identifier.split("-")[0]?.slice(0, 2) || "LN"}
+        </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <a
-              href={pr.html_url}
+              href={issue.url}
               target="_blank"
               rel="noopener noreferrer"
               className="text-blue-600 hover:underline font-medium"
             >
-              {pr.title}
+              {issue.title}
             </a>
-            <span className="px-2 py-0.5 text-xs bg-orange-500 text-white rounded-full font-medium">
-              {reasonLabel}
+            <span className={`px-2 py-0.5 text-xs text-white rounded-full font-medium ${priorityColors[issue.priority] || "bg-gray-500"}`}>
+              {issue.priorityLabel || "No Priority"}
             </span>
-            {pr.draft && (
-              <span className="px-2 py-0.5 text-xs bg-gray-200 text-gray-600 rounded-full">
-                Draft
-              </span>
-            )}
+            <span className="px-2 py-0.5 text-xs bg-purple-500 text-white rounded-full font-medium">
+              {stateLabel}
+            </span>
           </div>
           <div className="mt-1 text-sm text-gray-600">
-            <span className="text-gray-500">{repository.owner}/{repository.repo}</span>
+            <span className="text-purple-600 font-medium">{issue.identifier}</span>
             {" · "}
-            #{pr.number} opened {daysAgo === 0 ? "today" : `${daysAgo}d ago`} by{" "}
-            <a
-              href={pr.user.html_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:underline"
-            >
-              {pr.user.login}
-            </a>
+            {issue.state.name}
           </div>
         </div>
       </div>
