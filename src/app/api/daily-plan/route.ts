@@ -30,6 +30,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const items: ActionableItemInput[] = body.items || [];
+    const maxHours: number = body.maxHours || 6;
 
     if (items.length === 0) {
       return NextResponse.json({ items: [], totalHours: 0 });
@@ -38,10 +39,11 @@ export async function POST(request: Request) {
     // Transform to format expected by estimateEffort
     const taskItems = items.map((item) => {
       // Use identifier (ENG-123) for Linear issues as it's more meaningful for the LLM
-      const id =
-        item.type === "linear"
-          ? item.linearIssue?.identifier || ""
-          : `pr-${item.pr?.id}`;
+      // For pr_with_linear, prefer Linear identifier since it has the linked context
+      const hasLinear = item.type === "linear" || item.type === "pr_with_linear";
+      const id = hasLinear && item.linearIssue?.identifier
+        ? item.linearIssue.identifier
+        : `pr-${item.pr?.id}`;
 
       // Truncate description to avoid token limits
       const truncate = (str: string | undefined, max: number) =>
@@ -56,10 +58,9 @@ export async function POST(request: Request) {
       return {
         id,
         type: item.type,
-        title:
-          item.type === "linear"
-            ? item.linearIssue?.title || ""
-            : item.pr?.title || "",
+        title: hasLinear && item.linearIssue?.title
+          ? item.linearIssue.title
+          : item.pr?.title || "",
         description: truncate(item.linearIssue?.description, 500),
         repo: item.prRepository
           ? `${item.prRepository.owner}/${item.prRepository.repo}`
@@ -75,13 +76,14 @@ export async function POST(request: Request) {
     });
 
     const estimated = await estimateEffort(taskItems);
-    const { items: scopedItems, totalHours } = scopeToWorkday(estimated, 8);
+    const { items: scopedItems, totalHours } = scopeToWorkday(estimated, maxHours);
 
     // Map back to include original item data with hours
     const result = scopedItems.map((estimated) => {
       const original = items.find((item) => {
-        if (item.type === "linear") {
-          return item.linearIssue?.identifier === estimated.id;
+        const hasLinear = item.type === "linear" || item.type === "pr_with_linear";
+        if (hasLinear && item.linearIssue?.identifier) {
+          return item.linearIssue.identifier === estimated.id;
         }
         return `pr-${item.pr?.id}` === estimated.id;
       });

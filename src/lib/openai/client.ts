@@ -31,35 +31,37 @@ export async function estimateEffort(items: TaskItem[]): Promise<EstimatedItem[]
   }
 
   const itemDescriptions = items
-    .map((item, idx) => {
+    .map((item) => {
       const parts: string[] = [];
 
       if (item.type === "pr" || item.type === "pr_with_linear") {
-        parts.push(`${idx + 1}. [PR] "${item.title}"`);
-        parts.push(`   Repo: ${item.repo}, Action needed: ${item.reason}`);
+        parts.push(`ID: ${item.id}`);
+        parts.push(`[PR] "${item.title}"`);
+        parts.push(`Repo: ${item.repo}, Action needed: ${item.reason}`);
         if (item.linearIdentifier) {
-          parts.push(`   Linked Linear: ${item.linearIdentifier} (${item.linearPriority}, ${item.linearState})`);
+          parts.push(`Linked Linear: ${item.linearIdentifier} (${item.linearPriority}, ${item.linearState})`);
           if (item.description) {
-            parts.push(`   Description: ${item.description}`);
+            parts.push(`Description: ${item.description}`);
           }
           if (item.linearEstimate) {
-            parts.push(`   Story points: ${item.linearEstimate}`);
+            parts.push(`Story points: ${item.linearEstimate}`);
           }
           if (item.recentComments) {
-            parts.push(`   Recent comments: ${item.recentComments}`);
+            parts.push(`Recent comments: ${item.recentComments}`);
           }
         }
       } else {
-        parts.push(`${idx + 1}. [Linear] "${item.title}" (${item.linearIdentifier})`);
-        parts.push(`   Priority: ${item.linearPriority}, State: ${item.linearState}`);
+        parts.push(`ID: ${item.id}`);
+        parts.push(`[Linear] "${item.title}" (${item.linearIdentifier})`);
+        parts.push(`Priority: ${item.linearPriority}, State: ${item.linearState}`);
         if (item.linearEstimate) {
-          parts.push(`   Story points: ${item.linearEstimate}`);
+          parts.push(`Story points: ${item.linearEstimate}`);
         }
         if (item.description) {
-          parts.push(`   Description: ${item.description}`);
+          parts.push(`Description: ${item.description}`);
         }
         if (item.recentComments) {
-          parts.push(`   Recent comments: ${item.recentComments}`);
+          parts.push(`Recent comments: ${item.recentComments}`);
         }
       }
 

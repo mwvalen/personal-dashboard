@@ -284,6 +284,8 @@ function Dashboard() {
     return null;
   });
   const [showRefreshConfirm, setShowRefreshConfirm] = useState(false);
+  const [showHoursPrompt, setShowHoursPrompt] = useState(false);
+  const [selectedHours, setSelectedHours] = useState(6);
   const router = useRouter();
   const supabase = createClient();
 
@@ -337,14 +339,15 @@ function Dashboard() {
     );
   };
 
-  const generateDailyPlan = () => {
+  const generateDailyPlan = (hours: number) => {
     if (activeItems.length === 0) return;
 
     setDailyPlanLoading(true);
+    setShowHoursPrompt(false);
     fetch("/api/daily-plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: activeItems }),
+      body: JSON.stringify({ items: activeItems, maxHours: hours }),
     })
       .then((res) => res.json())
       .then((data) => {
@@ -372,13 +375,17 @@ function Dashboard() {
     if (dailyPlanLastRun && isSameDay(dailyPlanLastRun, new Date())) {
       setShowRefreshConfirm(true);
     } else {
-      generateDailyPlan();
+      setShowHoursPrompt(true);
     }
   };
 
   const confirmRefresh = () => {
     setShowRefreshConfirm(false);
-    generateDailyPlan();
+    setShowHoursPrompt(true);
+  };
+
+  const handleHoursConfirm = () => {
+    generateDailyPlan(selectedHours);
   };
 
   const handleSignOut = async () => {
@@ -467,6 +474,11 @@ function Dashboard() {
                 onConfirm={confirmRefresh}
                 onCancelConfirm={() => setShowRefreshConfirm(false)}
                 disabled={activeItems.length === 0}
+                showHoursPrompt={showHoursPrompt}
+                selectedHours={selectedHours}
+                onHoursChange={setSelectedHours}
+                onHoursConfirm={handleHoursConfirm}
+                onHoursCancel={() => setShowHoursPrompt(false)}
               />
               {(() => {
                 // Filter out items already shown in Today's Dash
@@ -676,6 +688,11 @@ function TodaysDashSection({
   onConfirm,
   onCancelConfirm,
   disabled,
+  showHoursPrompt,
+  selectedHours,
+  onHoursChange,
+  onHoursConfirm,
+  onHoursCancel,
 }: {
   items: DailyPlanItem[];
   totalHours: number;
@@ -687,6 +704,11 @@ function TodaysDashSection({
   onConfirm: () => void;
   onCancelConfirm: () => void;
   disabled: boolean;
+  showHoursPrompt: boolean;
+  selectedHours: number;
+  onHoursChange: (hours: number) => void;
+  onHoursConfirm: () => void;
+  onHoursCancel: () => void;
 }) {
   const formatLastRun = (date: Date) => {
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -723,6 +745,40 @@ function TodaysDashSection({
                 className="px-3 py-1.5 text-xs bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 rounded transition-colors"
               >
                 Refresh
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hours Prompt Modal */}
+      {showHoursPrompt && (
+        <div className="absolute inset-0 bg-slate-950/90 rounded-xl flex items-center justify-center z-10">
+          <div className="text-center p-4">
+            <p className="text-white text-sm mb-3">How many hours of focused work today?</p>
+            <div className="flex items-center justify-center gap-2 mb-4">
+              <input
+                type="number"
+                min="1"
+                max="12"
+                value={selectedHours}
+                onChange={(e) => onHoursChange(Math.max(1, Math.min(12, parseInt(e.target.value) || 1)))}
+                className="w-16 px-2 py-1.5 text-center text-sm bg-slate-800 border border-slate-600 rounded text-white focus:outline-none focus:border-slate-500"
+              />
+              <span className="text-slate-400 text-sm">hours</span>
+            </div>
+            <div className="flex gap-2 justify-center">
+              <button
+                onClick={onHoursCancel}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={onHoursConfirm}
+                className="px-3 py-1.5 text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded transition-colors"
+              >
+                Generate
               </button>
             </div>
           </div>
