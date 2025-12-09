@@ -58,14 +58,13 @@ export async function sendDailyDigest({
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*:git-pull-request: PRs Needing Action: ${actionablePRs.length}*`,
+        text: `*PRs Needing Action: ${actionablePRs.length}*`,
       },
     });
 
     // List each PR
     const prLines = actionablePRs.map((pr) => {
-      const emoji = getReasonEmoji(pr.reason);
-      return `${emoji} <${pr.pr.html_url}|#${pr.pr.number}: ${pr.pr.title}> — _${pr.reasonLabel}_`;
+      return `• <${pr.pr.html_url}|#${pr.pr.number}: ${pr.pr.title}> — _${pr.reasonLabel}_`;
     });
 
     blocks.push({
@@ -80,7 +79,7 @@ export async function sendDailyDigest({
       type: "section",
       text: {
         type: "mrkdwn",
-        text: "*:git-pull-request: PRs Needing Action: 0* :white_check_mark:",
+        text: "*PRs Needing Action: 0* :white_check_mark:",
       },
     });
   }
@@ -92,7 +91,7 @@ export async function sendDailyDigest({
     type: "section",
     text: {
       type: "mrkdwn",
-      text: `*:linear: Linear Issues: ${linearIssues.length} total*\n• In Progress: ${inProgress.length}\n• To Do: ${toDo.length}`,
+      text: `*Linear Issues: ${linearIssues.length} total*\n• In Progress: ${inProgress.length}\n• To Do: ${toDo.length}`,
     },
   });
 
