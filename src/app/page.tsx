@@ -185,6 +185,10 @@ function combineActionableItems(
     });
   }
 
+  // Linear priority: 0 = No Priority, 1 = Urgent, 2 = High, 3 = Medium, 4 = Low
+  // We want: Urgent (1) -> High (2) -> Medium (3) -> Low (4) -> No Priority (0)
+  const priorityOrder: Record<number, number> = { 1: 0, 2: 1, 3: 2, 4: 3, 0: 4 };
+
   for (const issue of linearIssues) {
     const prAttachment = issue.attachments?.nodes?.find(
       (a) => a.url?.includes("github.com") && a.url?.includes("/pull/")
@@ -193,13 +197,14 @@ function combineActionableItems(
       continue;
     }
 
+    const priorityRank = priorityOrder[issue.priority] ?? 5;
     let sortPriority: number;
     if (issue.priority === 1) {
-      sortPriority = 100 + issue.priority;
+      sortPriority = 100 + priorityRank;
     } else if (issue.state.type === "started") {
-      sortPriority = 300 + issue.priority;
+      sortPriority = 300 + priorityRank;
     } else {
-      sortPriority = 400 + issue.priority;
+      sortPriority = 400 + priorityRank;
     }
 
     items.push({

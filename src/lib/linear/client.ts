@@ -107,6 +107,12 @@ export async function fetchMyLinearIssues(): Promise<LinearIssuesResult> {
 
   try {
     const issues = await client.getMyActionableIssues();
+
+    // Sort by priority: High (2), Medium (3), Low (4), No Priority (0)
+    // Linear uses: 0 = No Priority, 1 = Urgent, 2 = High, 3 = Medium, 4 = Low
+    const priorityOrder: Record<number, number> = { 1: 0, 2: 1, 3: 2, 4: 3, 0: 4 };
+    issues.sort((a, b) => (priorityOrder[a.priority] ?? 5) - (priorityOrder[b.priority] ?? 5));
+
     return { issues };
   } catch (e) {
     return {
