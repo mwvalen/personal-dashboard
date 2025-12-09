@@ -479,6 +479,7 @@ function Dashboard() {
                 onHoursChange={setSelectedHours}
                 onHoursConfirm={handleHoursConfirm}
                 onHoursCancel={() => setShowHoursPrompt(false)}
+                activeItemIds={new Set(activeItems.map((i) => i.pr?.id || i.linearIssue?.id))}
               />
               {(() => {
                 // Filter out items already shown in Today's Dash
@@ -693,6 +694,7 @@ function TodaysDashSection({
   onHoursChange,
   onHoursConfirm,
   onHoursCancel,
+  activeItemIds,
 }: {
   items: DailyPlanItem[];
   totalHours: number;
@@ -709,6 +711,7 @@ function TodaysDashSection({
   onHoursChange: (hours: number) => void;
   onHoursConfirm: () => void;
   onHoursCancel: () => void;
+  activeItemIds: Set<number | string | undefined>;
 }) {
   const formatLastRun = (date: Date) => {
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -805,9 +808,13 @@ function TodaysDashSection({
       ) : (
         <>
           <div className="space-y-3 mt-2">
-            {items.map((item) => (
-              <DailyPlanItemCard key={item.pr?.id || item.linearIssue?.id} item={item} now={now} />
-            ))}
+            {items.map((item) => {
+              const itemId = item.pr?.id || item.linearIssue?.id;
+              const isComplete = !activeItemIds.has(itemId);
+              return (
+                <DailyPlanItemCard key={itemId} item={item} now={now} isComplete={isComplete} />
+              );
+            })}
           </div>
           <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -834,7 +841,17 @@ function TodaysDashSection({
   );
 }
 
-function DailyPlanItemCard({ item, now }: { item: DailyPlanItem; now: number }) {
+function CompleteCheckmark() {
+  return (
+    <div className="w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0" title="Done">
+      <svg className="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 20 20">
+        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+      </svg>
+    </div>
+  );
+}
+
+function DailyPlanItemCard({ item, now, isComplete }: { item: DailyPlanItem; now: number; isComplete: boolean }) {
   if (item.type === "linear" && item.linearIssue) {
     const priorityStyles: Record<number, string> = {
       1: "bg-red-500/20 text-red-400",
@@ -844,7 +861,7 @@ function DailyPlanItemCard({ item, now }: { item: DailyPlanItem; now: number }) 
     };
 
     return (
-      <div className="flex items-center gap-3 p-3 bg-slate-900/50 rounded-lg">
+      <div className={`flex items-center gap-3 p-3 bg-slate-900/50 rounded-lg ${isComplete ? "opacity-60" : ""}`}>
         <div className="w-8 h-8 rounded-md bg-violet-500/20 flex items-center justify-center flex-shrink-0">
           <span className="text-violet-400 text-xs font-bold">
             {item.linearIssue.identifier.split("-")[0]?.slice(0, 2) || "LN"}
@@ -855,7 +872,7 @@ function DailyPlanItemCard({ item, now }: { item: DailyPlanItem; now: number }) 
             href={item.linearIssue.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-white font-medium hover:text-blue-400 transition-colors truncate block"
+            className={`text-sm font-medium hover:text-blue-400 transition-colors truncate block ${isComplete ? "text-slate-400 line-through" : "text-white"}`}
           >
             {item.linearIssue.title}
           </a>
@@ -866,14 +883,18 @@ function DailyPlanItemCard({ item, now }: { item: DailyPlanItem; now: number }) 
             <span className="text-xs text-slate-500">{item.linearIssue.identifier}</span>
           </div>
         </div>
-        <div className="relative group flex-shrink-0">
-          <div className="px-2 py-1 bg-slate-800 rounded text-xs font-medium text-slate-300 cursor-help">
-            {item.hours}h
+        {isComplete ? (
+          <CompleteCheckmark />
+        ) : (
+          <div className="relative group flex-shrink-0">
+            <div className="px-2 py-1 bg-slate-800 rounded text-xs font-medium text-slate-300 cursor-help">
+              {item.hours}h
+            </div>
+            <div className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-slate-700 text-xs text-slate-200 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
+              {item.reasoning}
+            </div>
           </div>
-          <div className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-slate-700 text-xs text-slate-200 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
-            {item.reasoning}
-          </div>
-        </div>
+        )}
       </div>
     );
   }
@@ -883,14 +904,14 @@ function DailyPlanItemCard({ item, now }: { item: DailyPlanItem; now: number }) 
     const daysAgo = Math.floor((now - createdAt.getTime()) / (1000 * 60 * 60 * 24));
 
     return (
-      <div className="flex items-center gap-3 p-3 bg-slate-900/50 rounded-lg">
+      <div className={`flex items-center gap-3 p-3 bg-slate-900/50 rounded-lg ${isComplete ? "opacity-60" : ""}`}>
         <img src={item.pr.user.avatar_url} alt={item.pr.user.login} className="w-8 h-8 rounded-full flex-shrink-0" />
         <div className="flex-1 min-w-0">
           <a
             href={item.pr.html_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-white font-medium hover:text-blue-400 transition-colors truncate block"
+            className={`text-sm font-medium hover:text-blue-400 transition-colors truncate block ${isComplete ? "text-slate-400 line-through" : "text-white"}`}
           >
             {item.pr.title}
           </a>
@@ -910,14 +931,18 @@ function DailyPlanItemCard({ item, now }: { item: DailyPlanItem; now: number }) 
             </span>
           </div>
         </div>
-        <div className="relative group flex-shrink-0">
-          <div className="px-2 py-1 bg-slate-800 rounded text-xs font-medium text-slate-300 cursor-help">
-            {item.hours}h
+        {isComplete ? (
+          <CompleteCheckmark />
+        ) : (
+          <div className="relative group flex-shrink-0">
+            <div className="px-2 py-1 bg-slate-800 rounded text-xs font-medium text-slate-300 cursor-help">
+              {item.hours}h
+            </div>
+            <div className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-slate-700 text-xs text-slate-200 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
+              {item.reasoning}
+            </div>
           </div>
-          <div className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-slate-700 text-xs text-slate-200 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
-            {item.reasoning}
-          </div>
-        </div>
+        )}
       </div>
     );
   }
