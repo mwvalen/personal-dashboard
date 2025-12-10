@@ -144,6 +144,11 @@ interface LinearIssueData {
       createdAt: string;
     }>;
   };
+  inverseRelations?: {
+    nodes: Array<{
+      type: string;
+    }>;
+  };
 }
 
 interface ActionableItem {
@@ -156,6 +161,7 @@ interface ActionableItem {
   linearIssue?: LinearIssueData;
   isDraft?: boolean;
   isInReview?: boolean;
+  isBlocked?: boolean;
 }
 
 interface DailyPlanItem extends ActionableItem {
@@ -222,12 +228,18 @@ function combineActionableItems(
       sortPriority = 400 + priorityRank;
     }
 
+    // Check if issue is blocked by another issue (has "blocks" inverse relation)
+    const isBlockedByRelation = issue.inverseRelations?.nodes?.some(
+      (rel) => rel.type === "blocks"
+    );
+
     items.push({
       type: "linear",
       sortPriority,
       linearIssue: issue,
       isDraft: false,
       isInReview: issue.state.name.toLowerCase().includes("review"),
+      isBlocked: issue.state.name.toLowerCase().includes("blocked") || isBlockedByRelation,
     });
   }
 
@@ -331,9 +343,10 @@ function Dashboard() {
   }, []);
 
   const actionableItems = combineActionableItems(actionablePRs, linearIssues);
-  const activeItems = actionableItems.filter((i) => !i.isDraft && !i.isInReview);
+  const activeItems = actionableItems.filter((i) => !i.isDraft && !i.isInReview && !i.isBlocked);
   const draftItems = actionableItems.filter((i) => i.isDraft);
   const inReviewItems = actionableItems.filter((i) => i.isInReview);
+  const blockedItems = actionableItems.filter((i) => i.isBlocked);
 
   // Calculate total hours of selected calendar events
   const totalMeetingHours = calendarEvents
@@ -585,6 +598,23 @@ function Dashboard() {
             </div>
             <div className="space-y-3">
               {inReviewItems.map((item) => (
+                <ActionableItemCard key={item.linearIssue?.id} item={item} now={now} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Blocked Section */}
+        {!actionableLoading && !actionableError && blockedItems.length > 0 && (
+          <section>
+            <div className="flex items-center gap-3 mb-4">
+              <h2 className="text-xl font-semibold text-white">Blocked</h2>
+              <span className="px-2.5 py-0.5 text-xs font-medium bg-red-500/20 text-red-400 rounded-full">
+                {blockedItems.length}
+              </span>
+            </div>
+            <div className="space-y-3">
+              {blockedItems.map((item) => (
                 <ActionableItemCard key={item.linearIssue?.id} item={item} now={now} />
               ))}
             </div>

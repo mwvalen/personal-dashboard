@@ -25,6 +25,11 @@ export interface LinearIssue {
       createdAt: string;
     }>;
   };
+  inverseRelations?: {
+    nodes: Array<{
+      type: string; // "blocks" | "duplicate" | "related"
+    }>;
+  };
 }
 
 export interface LinearIssuesResult {

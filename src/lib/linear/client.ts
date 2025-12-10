@@ -84,6 +84,11 @@ class LinearClient {
                   createdAt
                 }
               }
+              inverseRelations(first: 10) {
+                nodes {
+                  type
+                }
+              }
             }
           }
         }

@@ -27,11 +27,6 @@ export async function fetchTodaysCalendarEvents(): Promise<CalendarEventsResult>
   }
 
   try {
-    const auth = new google.auth.GoogleAuth({
-      credentials,
-      scopes: ["https://www.googleapis.com/auth/calendar.readonly"],
-    });
-
     // Create a JWT client to impersonate the user
     const authClient = new google.auth.JWT({
       email: credentials.client_email,
