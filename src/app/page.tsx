@@ -925,23 +925,32 @@ function TodaysDashSection({
                 .map((event) => {
                   const startTime = new Date(event.start);
                   const endTime = new Date(event.end);
+                  const isPast = endTime.getTime() < now;
                   const timeStr = `${startTime.getHours()}:${startTime.getMinutes().toString().padStart(2, "0")}-${endTime.getHours()}:${endTime.getMinutes().toString().padStart(2, "0")}`;
                   const durationHours = (event.durationMinutes / 60).toFixed(1);
                   return (
                     <div
                       key={event.id}
-                      className="flex items-center gap-3 p-3 bg-slate-900/50 rounded-lg border border-slate-800"
+                      className={`flex items-center gap-3 p-3 bg-slate-900/50 rounded-lg border border-slate-800 ${isPast ? "opacity-50" : ""}`}
                     >
-                      <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
-                        <svg className="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                        </svg>
-                      </div>
+                      {isPast ? (
+                        <div className="w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0">
+                          <svg className="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                        </div>
+                      ) : (
+                        <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+                          <svg className="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                        </div>
+                      )}
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm text-white truncate">{event.summary}</p>
+                        <p className={`text-sm truncate ${isPast ? "text-slate-400 line-through" : "text-white"}`}>{event.summary}</p>
                         <p className="text-xs text-slate-500">{timeStr}</p>
                       </div>
-                      <span className="px-2 py-0.5 text-xs bg-amber-500/20 text-amber-400 rounded">
+                      <span className={`px-2 py-0.5 text-xs rounded ${isPast ? "bg-slate-700 text-slate-400" : "bg-amber-500/20 text-amber-400"}`}>
                         {durationHours}h
                       </span>
                     </div>
