@@ -391,7 +391,7 @@ function Dashboard() {
         const events = data.events || [];
         setCalendarEvents(events);
         // Pre-select non-all-day events that user accepted (or no response status = own event)
-        const defaultSelected = new Set(
+        const defaultSelected = new Set<string>(
           events
             .filter(
               (e: CalendarEvent) =>
