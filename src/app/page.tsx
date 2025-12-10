@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import type { User } from "@supabase/supabase-js";
 import type { GitHubPullRequest } from "@/types/github";
+import type { CalendarEvent } from "@/types/calendar";
 
 interface PRResult {
   repository: { owner: string; repo: string };
@@ -286,6 +287,9 @@ function Dashboard() {
   const [showRefreshConfirm, setShowRefreshConfirm] = useState(false);
   const [showHoursPrompt, setShowHoursPrompt] = useState(false);
   const [selectedHours, setSelectedHours] = useState(6);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [selectedEventIds, setSelectedEventIds] = useState<Set<string>>(new Set());
   const router = useRouter();
   const supabase = createClient();
 
@@ -331,6 +335,11 @@ function Dashboard() {
   const draftItems = actionableItems.filter((i) => i.isDraft);
   const inReviewItems = actionableItems.filter((i) => i.isInReview);
 
+  // Calculate total hours of selected calendar events
+  const totalMeetingHours = calendarEvents
+    .filter((e) => selectedEventIds.has(e.id))
+    .reduce((sum, e) => sum + e.durationMinutes / 60, 0);
+
   const isSameDay = (date1: Date, date2: Date) => {
     return (
       date1.getFullYear() === date2.getFullYear() &&
@@ -342,12 +351,15 @@ function Dashboard() {
   const generateDailyPlan = (hours: number) => {
     if (activeItems.length === 0) return;
 
+    // Subtract meeting hours from available focus time
+    const availableHours = Math.max(0.5, hours - totalMeetingHours);
+
     setDailyPlanLoading(true);
     setShowHoursPrompt(false);
     fetch("/api/daily-plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: activeItems, maxHours: hours }),
+      body: JSON.stringify({ items: activeItems, maxHours: availableHours }),
     })
       .then((res) => res.json())
       .then((data) => {
@@ -371,7 +383,34 @@ function Dashboard() {
       .catch(() => setDailyPlanLoading(false));
   };
 
+  const fetchCalendarEvents = () => {
+    setCalendarLoading(true);
+    fetch("/api/calendar/events")
+      .then((res) => res.json())
+      .then((data) => {
+        const events = data.events || [];
+        setCalendarEvents(events);
+        // Pre-select non-all-day events that user accepted (or no response status = own event)
+        const defaultSelected = new Set(
+          events
+            .filter(
+              (e: CalendarEvent) =>
+                !e.isAllDay && (e.responseStatus === "accepted" || !e.responseStatus)
+            )
+            .map((e: CalendarEvent) => e.id)
+        );
+        setSelectedEventIds(defaultSelected);
+        setCalendarLoading(false);
+      })
+      .catch(() => {
+        setCalendarEvents([]);
+        setCalendarLoading(false);
+      });
+  };
+
   const handleGenerateClick = () => {
+    // Fetch calendar events when opening the modal
+    fetchCalendarEvents();
     if (dailyPlanLastRun && isSameDay(dailyPlanLastRun, new Date())) {
       setShowRefreshConfirm(true);
     } else {
@@ -382,6 +421,18 @@ function Dashboard() {
   const confirmRefresh = () => {
     setShowRefreshConfirm(false);
     setShowHoursPrompt(true);
+  };
+
+  const toggleCalendarEvent = (eventId: string) => {
+    setSelectedEventIds((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(eventId)) {
+        newSet.delete(eventId);
+      } else {
+        newSet.add(eventId);
+      }
+      return newSet;
+    });
   };
 
   const handleHoursConfirm = () => {
@@ -480,6 +531,11 @@ function Dashboard() {
                 onHoursConfirm={handleHoursConfirm}
                 onHoursCancel={() => setShowHoursPrompt(false)}
                 activeItemIds={new Set(activeItems.map((i) => i.pr?.id || i.linearIssue?.id))}
+                calendarEvents={calendarEvents}
+                calendarLoading={calendarLoading}
+                selectedEventIds={selectedEventIds}
+                onToggleEvent={toggleCalendarEvent}
+                totalMeetingHours={totalMeetingHours}
               />
               {(() => {
                 // Filter out items already shown in Today's Dash
@@ -695,6 +751,11 @@ function TodaysDashSection({
   onHoursConfirm,
   onHoursCancel,
   activeItemIds,
+  calendarEvents,
+  calendarLoading,
+  selectedEventIds,
+  onToggleEvent,
+  totalMeetingHours,
 }: {
   items: DailyPlanItem[];
   totalHours: number;
@@ -712,6 +773,11 @@ function TodaysDashSection({
   onHoursConfirm: () => void;
   onHoursCancel: () => void;
   activeItemIds: Set<number | string | undefined>;
+  calendarEvents: CalendarEvent[];
+  calendarLoading: boolean;
+  selectedEventIds: Set<string>;
+  onToggleEvent: (eventId: string) => void;
+  totalMeetingHours: number;
 }) {
   const formatLastRun = (date: Date) => {
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -757,7 +823,7 @@ function TodaysDashSection({
       {/* Hours Prompt Modal */}
       {showHoursPrompt && (
         <div className="absolute inset-0 bg-slate-950/90 rounded-xl flex items-center justify-center z-10">
-          <div className="text-center p-4">
+          <div className="text-center p-4 max-w-sm w-full">
             <p className="text-white text-sm mb-3">How many hours of focused work today?</p>
             <div className="flex items-center justify-center gap-2 mb-4">
               <input
@@ -770,6 +836,48 @@ function TodaysDashSection({
               />
               <span className="text-slate-400 text-sm">hours</span>
             </div>
+
+            {/* Calendar Events Section */}
+            {calendarLoading ? (
+              <div className="mb-4">
+                <div className="h-4 w-32 bg-slate-800 rounded animate-pulse mx-auto" />
+              </div>
+            ) : calendarEvents.length > 0 && (
+              <div className="mb-4 text-left">
+                <p className="text-slate-400 text-xs mb-2 text-center">Select meetings that take up time:</p>
+                <div className="max-h-40 overflow-y-auto space-y-1">
+                  {calendarEvents.filter((e) => !e.isAllDay).map((event) => {
+                    const startTime = new Date(event.start);
+                    const endTime = new Date(event.end);
+                    const timeStr = `${startTime.getHours()}:${startTime.getMinutes().toString().padStart(2, "0")}-${endTime.getHours()}:${endTime.getMinutes().toString().padStart(2, "0")}`;
+                    const durationHours = (event.durationMinutes / 60).toFixed(1);
+                    return (
+                      <label
+                        key={event.id}
+                        className="flex items-center gap-2 p-2 rounded hover:bg-slate-800/50 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedEventIds.has(event.id)}
+                          onChange={() => onToggleEvent(event.id)}
+                          className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-0"
+                        />
+                        <span className="text-slate-500 text-xs font-mono">{timeStr}</span>
+                        <span className="text-slate-300 text-xs flex-1 truncate">{event.summary}</span>
+                        <span className="text-slate-500 text-xs">{durationHours}h</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {totalMeetingHours > 0 && (
+                  <div className="mt-3 pt-3 border-t border-slate-800 flex justify-between text-xs">
+                    <span className="text-slate-500">Meetings: {totalMeetingHours.toFixed(1)}h</span>
+                    <span className="text-slate-400">Available: <span className="text-white">{Math.max(0, selectedHours - totalMeetingHours).toFixed(1)}h</span></span>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex gap-2 justify-center">
               <button
                 onClick={onHoursCancel}
@@ -807,15 +915,59 @@ function TodaysDashSection({
         </div>
       ) : (
         <>
-          <div className="space-y-3 mt-2">
-            {items.map((item) => {
-              const itemId = item.pr?.id || item.linearIssue?.id;
-              const isComplete = !activeItemIds.has(itemId);
-              return (
-                <DailyPlanItemCard key={itemId} item={item} now={now} isComplete={isComplete} />
-              );
-            })}
-          </div>
+          {/* Calendar Events */}
+          {calendarEvents.filter((e) => !e.isAllDay && selectedEventIds.has(e.id)).length > 0 && (
+            <div className="space-y-2 mt-2 mb-4">
+              <p className="text-xs text-slate-500 uppercase tracking-wide">Meetings</p>
+              {calendarEvents
+                .filter((e) => !e.isAllDay && selectedEventIds.has(e.id))
+                .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
+                .map((event) => {
+                  const startTime = new Date(event.start);
+                  const endTime = new Date(event.end);
+                  const timeStr = `${startTime.getHours()}:${startTime.getMinutes().toString().padStart(2, "0")}-${endTime.getHours()}:${endTime.getMinutes().toString().padStart(2, "0")}`;
+                  const durationHours = (event.durationMinutes / 60).toFixed(1);
+                  return (
+                    <div
+                      key={event.id}
+                      className="flex items-center gap-3 p-3 bg-slate-900/50 rounded-lg border border-slate-800"
+                    >
+                      <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+                        <svg className="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-white truncate">{event.summary}</p>
+                        <p className="text-xs text-slate-500">{timeStr}</p>
+                      </div>
+                      <span className="px-2 py-0.5 text-xs bg-amber-500/20 text-amber-400 rounded">
+                        {durationHours}h
+                      </span>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+
+          {/* Tasks */}
+          {items.length > 0 && (
+            <div className="space-y-2">
+              {calendarEvents.filter((e) => !e.isAllDay && selectedEventIds.has(e.id)).length > 0 && (
+                <p className="text-xs text-slate-500 uppercase tracking-wide">Tasks</p>
+              )}
+              <div className="space-y-3">
+                {items.map((item) => {
+                  const itemId = item.pr?.id || item.linearIssue?.id;
+                  const isComplete = !activeItemIds.has(itemId);
+                  return (
+                    <DailyPlanItemCard key={itemId} item={item} now={now} isComplete={isComplete} />
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between">
             <div className="flex items-center gap-2">
               {lastRun && (
@@ -832,7 +984,10 @@ function TodaysDashSection({
               </button>
             </div>
             <span className="text-sm text-slate-400">
-              Total: <span className="font-medium text-white">{totalHours}h</span>
+              {totalMeetingHours > 0 && (
+                <span className="mr-3">Meetings: <span className="text-amber-400">{totalMeetingHours.toFixed(1)}h</span></span>
+              )}
+              Tasks: <span className="font-medium text-white">{totalHours}h</span>
             </span>
           </div>
         </>
