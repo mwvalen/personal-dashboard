@@ -299,9 +299,55 @@ function Dashboard() {
   const [showRefreshConfirm, setShowRefreshConfirm] = useState(false);
   const [showHoursPrompt, setShowHoursPrompt] = useState(false);
   const [selectedHours, setSelectedHours] = useState(6);
-  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const stored = localStorage.getItem("dailyPlan");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        // Only load meetings if they're from today
+        if (parsed.lastRun && parsed.meetings) {
+          const lastRunDate = new Date(parsed.lastRun);
+          const today = new Date();
+          if (
+            lastRunDate.getFullYear() === today.getFullYear() &&
+            lastRunDate.getMonth() === today.getMonth() &&
+            lastRunDate.getDate() === today.getDate()
+          ) {
+            return parsed.meetings;
+          }
+        }
+      }
+    } catch {
+      // Invalid stored data, ignore
+    }
+    return [];
+  });
   const [calendarLoading, setCalendarLoading] = useState(false);
-  const [selectedEventIds, setSelectedEventIds] = useState<Set<string>>(new Set());
+  const [selectedEventIds, setSelectedEventIds] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const stored = localStorage.getItem("dailyPlan");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        // Only load meeting selections if they're from today
+        if (parsed.lastRun && parsed.meetings) {
+          const lastRunDate = new Date(parsed.lastRun);
+          const today = new Date();
+          if (
+            lastRunDate.getFullYear() === today.getFullYear() &&
+            lastRunDate.getMonth() === today.getMonth() &&
+            lastRunDate.getDate() === today.getDate()
+          ) {
+            return new Set(parsed.meetings.map((m: CalendarEvent) => m.id));
+          }
+        }
+      }
+    } catch {
+      // Invalid stored data, ignore
+    }
+    return new Set();
+  });
   const router = useRouter();
   const supabase = createClient();
 
@@ -381,13 +427,17 @@ function Dashboard() {
           setDailyPlanItems(data.items || []);
           setDailyPlanTotal(data.totalHours || 0);
           setDailyPlanLastRun(newLastRun);
-          // Persist to localStorage
+          // Persist to localStorage (including selected meetings)
+          const selectedMeetings = calendarEvents
+            .filter((e) => selectedEventIds.has(e.id))
+            .map((e) => ({ ...e }));
           localStorage.setItem(
             "dailyPlan",
             JSON.stringify({
               items: data.items || [],
               totalHours: data.totalHours || 0,
               lastRun: newLastRun.toISOString(),
+              meetings: selectedMeetings,
             })
           );
         }
