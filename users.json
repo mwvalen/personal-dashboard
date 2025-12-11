@@ -1,0 +1,33 @@
+{
+  "users": [
+    {
+      "githubUsername": "mwvalen",
+      "email": "michael@superadvisor.ai"
+    },
+    {
+      "githubUsername": "aeciorc",
+      "email": "aecio@superadvisor.ai"
+    },
+    {
+      "githubUsername": "hyuntony",
+      "email": "anthony@superadvisor.ai"
+    },
+    {
+      "githubUsername": "lordelogos",
+      "email": "paul@superadvisor.ai"
+    },
+    {
+      "githubUsername": "Migs86",
+      "email": "miguel@superadvisor.ai"
+    },
+    {
+      "githubUsername": "jquianzon",
+      "email": "janelle@superadvisor.ai"
+    },
+    {
+      "githubUsername": "oleksandrsuperadvisor",
+      "email": "oleksandr@superadvisor.ai"
+    }
+  ],
+  "defaultUser": "mwvalen"
+}

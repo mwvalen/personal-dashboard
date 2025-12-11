@@ -45,8 +45,56 @@ class LinearClient {
     return result;
   }
 
-  async getMyActionableIssues(): Promise<LinearIssue[]> {
-    const query = `
+  async getActionableIssues(assigneeEmail?: string): Promise<LinearIssue[]> {
+    // If no email provided, use viewer (authenticated user)
+    // Otherwise, filter by assignee email
+    const query = assigneeEmail
+      ? `
+      query {
+        issues(
+          filter: {
+            assignee: { email: { eq: "${assigneeEmail}" } }
+            state: { type: { in: ["started", "unstarted"] } }
+          }
+          first: 100
+        ) {
+          nodes {
+            id
+            identifier
+            title
+            description
+            url
+            priority
+            priorityLabel
+            estimate
+            createdAt
+            updatedAt
+            state {
+              name
+              type
+            }
+            attachments {
+              nodes {
+                url
+                sourceType
+              }
+            }
+            comments(first: 10) {
+              nodes {
+                body
+                createdAt
+              }
+            }
+            inverseRelations(first: 10) {
+              nodes {
+                type
+              }
+            }
+          }
+        }
+      }
+    `
+      : `
       query {
         viewer {
           assignedIssues(
@@ -96,6 +144,10 @@ class LinearClient {
     `;
 
     const response = await this.query<LinearGraphQLResponse>(query);
+    // Response structure differs based on query type
+    if (assigneeEmail) {
+      return (response.data as { issues?: { nodes: LinearIssue[] } })?.issues?.nodes || [];
+    }
     return response.data?.viewer?.assignedIssues?.nodes || [];
   }
 }
@@ -111,7 +163,7 @@ function createLinearClient(): LinearClient | null {
   return new LinearClient(apiKey);
 }
 
-export async function fetchMyLinearIssues(): Promise<LinearIssuesResult> {
+export async function fetchLinearIssues(assigneeEmail?: string): Promise<LinearIssuesResult> {
   const client = createLinearClient();
 
   if (!client) {
@@ -119,7 +171,7 @@ export async function fetchMyLinearIssues(): Promise<LinearIssuesResult> {
   }
 
   try {
-    const issues = await client.getMyActionableIssues();
+    const issues = await client.getActionableIssues(assigneeEmail);
 
     // Sort by priority: High (2), Medium (3), Low (4), No Priority (0)
     // Linear uses: 0 = No Priority, 1 = Urgent, 2 = High, 3 = Medium, 4 = Low

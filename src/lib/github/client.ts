@@ -202,7 +202,9 @@ function hasUserReviewed(reviews: GitHubReview[], username: string): boolean {
   );
 }
 
-export async function fetchActionablePullRequests(): Promise<ActionablePRsResult> {
+export async function fetchActionablePullRequests(
+  targetUsername?: string
+): Promise<ActionablePRsResult> {
   const client = createGitHubClient();
 
   if (!client) {
@@ -210,8 +212,8 @@ export async function fetchActionablePullRequests(): Promise<ActionablePRsResult
   }
 
   try {
-    const currentUser = await client.getAuthenticatedUser();
-    const username = currentUser.login;
+    // If no target username provided, fall back to authenticated user
+    const username = targetUsername || (await client.getAuthenticatedUser()).login;
 
     const actionablePRs: ActionablePR[] = [];
 

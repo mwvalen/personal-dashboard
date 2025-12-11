@@ -14,9 +14,12 @@ function getServiceAccountCredentials() {
   }
 }
 
-export async function fetchTodaysCalendarEvents(): Promise<CalendarEventsResult> {
+export async function fetchTodaysCalendarEvents(
+  targetEmail?: string
+): Promise<CalendarEventsResult> {
   const credentials = getServiceAccountCredentials();
-  const userEmail = process.env.GOOGLE_CALENDAR_USER_EMAIL;
+  // Use provided email or fall back to env var
+  const userEmail = targetEmail || process.env.GOOGLE_CALENDAR_USER_EMAIL;
 
   if (!credentials) {
     return { events: [], error: "Google Calendar not configured" };

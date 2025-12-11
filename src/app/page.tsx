@@ -2,10 +2,12 @@
 
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { User } from "@supabase/supabase-js";
 import type { GitHubPullRequest } from "@/types/github";
 import type { CalendarEvent } from "@/types/calendar";
+import type { DashboardUser } from "@/types/user";
+import { UserSelector } from "@/components/UserSelector";
 
 interface PRResult {
   repository: { owner: string; repo: string };
@@ -248,63 +250,47 @@ function combineActionableItems(
 }
 
 function Dashboard() {
+  // User selection state
+  const [users, setUsers] = useState<DashboardUser[]>([]);
+  const [selectedUser, setSelectedUser] = useState<DashboardUser | null>(null);
+  const [usersLoading, setUsersLoading] = useState(true);
+
   const [githubUser, setGithubUser] = useState<GitHubUser | null>(null);
   const [prResults, setPrResults] = useState<PRResult[] | null>(null);
   const [prLoading, setPrLoading] = useState(true);
   const [actionablePRs, setActionablePRs] = useState<ActionablePRData[]>([]);
   const [now, setNow] = useState(Date.now);
   const [linearIssues, setLinearIssues] = useState<LinearIssueData[]>([]);
+  const [linearUnavailable, setLinearUnavailable] = useState(false);
   const [actionableLoading, setActionableLoading] = useState(true);
   const [actionableError, setActionableError] = useState<string | null>(null);
-  const [dailyPlanItems, setDailyPlanItems] = useState<DailyPlanItem[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const stored = localStorage.getItem("dailyPlan");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        return parsed.items || [];
-      }
-    } catch {
-      // Invalid stored data, ignore
-    }
-    return [];
-  });
-  const [dailyPlanTotal, setDailyPlanTotal] = useState(() => {
-    if (typeof window === "undefined") return 0;
-    try {
-      const stored = localStorage.getItem("dailyPlan");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        return parsed.totalHours || 0;
-      }
-    } catch {
-      // Invalid stored data, ignore
-    }
-    return 0;
-  });
+  const [dailyPlanItems, setDailyPlanItems] = useState<DailyPlanItem[]>([]);
+  const [dailyPlanTotal, setDailyPlanTotal] = useState(0);
   const [dailyPlanLoading, setDailyPlanLoading] = useState(false);
-  const [dailyPlanLastRun, setDailyPlanLastRun] = useState<Date | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const stored = localStorage.getItem("dailyPlan");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        return parsed.lastRun ? new Date(parsed.lastRun) : null;
-      }
-    } catch {
-      // Invalid stored data, ignore
-    }
-    return null;
-  });
+  const [dailyPlanLastRun, setDailyPlanLastRun] = useState<Date | null>(null);
   const [showRefreshConfirm, setShowRefreshConfirm] = useState(false);
   const [showHoursPrompt, setShowHoursPrompt] = useState(false);
   const [selectedHours, setSelectedHours] = useState(6);
-  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>(() => {
-    if (typeof window === "undefined") return [];
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [selectedEventIds, setSelectedEventIds] = useState<Set<string>>(new Set());
+  const router = useRouter();
+  const supabase = createClient();
+
+  // Helper to get localStorage key for current user (using GitHub username)
+  const getDailyPlanKey = useCallback((githubUsername: string) => `dailyPlan_${githubUsername}`, []);
+
+  // Load daily plan from localStorage for a specific user
+  const loadDailyPlanFromStorage = useCallback((githubUsername: string) => {
+    if (typeof window === "undefined") return;
     try {
-      const stored = localStorage.getItem("dailyPlan");
+      const stored = localStorage.getItem(getDailyPlanKey(githubUsername));
       if (stored) {
         const parsed = JSON.parse(stored);
+        setDailyPlanItems(parsed.items || []);
+        setDailyPlanTotal(parsed.totalHours || 0);
+        setDailyPlanLastRun(parsed.lastRun ? new Date(parsed.lastRun) : null);
+
         // Only load meetings if they're from today
         if (parsed.lastRun && parsed.meetings) {
           const lastRunDate = new Date(parsed.lastRun);
@@ -314,51 +300,67 @@ function Dashboard() {
             lastRunDate.getMonth() === today.getMonth() &&
             lastRunDate.getDate() === today.getDate()
           ) {
-            return parsed.meetings;
+            setCalendarEvents(parsed.meetings);
+            setSelectedEventIds(new Set(parsed.meetings.map((m: CalendarEvent) => m.id)));
+            return;
           }
         }
       }
     } catch {
       // Invalid stored data, ignore
     }
-    return [];
-  });
-  const [calendarLoading, setCalendarLoading] = useState(false);
-  const [selectedEventIds, setSelectedEventIds] = useState<Set<string>>(() => {
-    if (typeof window === "undefined") return new Set();
-    try {
-      const stored = localStorage.getItem("dailyPlan");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        // Only load meeting selections if they're from today
-        if (parsed.lastRun && parsed.meetings) {
-          const lastRunDate = new Date(parsed.lastRun);
-          const today = new Date();
-          if (
-            lastRunDate.getFullYear() === today.getFullYear() &&
-            lastRunDate.getMonth() === today.getMonth() &&
-            lastRunDate.getDate() === today.getDate()
-          ) {
-            return new Set(parsed.meetings.map((m: CalendarEvent) => m.id));
-          }
-        }
-      }
-    } catch {
-      // Invalid stored data, ignore
-    }
-    return new Set();
-  });
-  const router = useRouter();
-  const supabase = createClient();
+    // Reset if no valid data
+    setDailyPlanItems([]);
+    setDailyPlanTotal(0);
+    setDailyPlanLastRun(null);
+    setCalendarEvents([]);
+    setSelectedEventIds(new Set());
+  }, [getDailyPlanKey]);
 
+  // Load users on mount
   useEffect(() => {
-    fetch("/api/github/user")
+    fetch("/api/users")
       .then((res) => res.json())
       .then((data) => {
-        if (!data.error) setGithubUser(data);
+        if (data.users) {
+          setUsers(data.users);
+          // Restore selected user from localStorage or use default
+          const savedUsername = localStorage.getItem("selectedUserId");
+          const savedUser = data.users.find((u: DashboardUser) => u.githubUsername === savedUsername);
+          const userToSelect = savedUser || data.users.find((u: DashboardUser) => u.githubUsername === data.defaultUser) || data.users[0];
+          setSelectedUser(userToSelect);
+          if (userToSelect) {
+            loadDailyPlanFromStorage(userToSelect.githubUsername);
+          }
+        }
+        setUsersLoading(false);
       })
-      .catch(() => {});
+      .catch(() => {
+        setUsersLoading(false);
+      });
+  }, [loadDailyPlanFromStorage]);
 
+  // Fetch data when selected user changes
+  useEffect(() => {
+    if (!selectedUser) return;
+
+    const githubUsername = selectedUser.githubUsername;
+
+    // Set GitHub user info from selected user
+    setGithubUser({
+      login: selectedUser.githubUsername,
+      name: selectedUser.displayName || selectedUser.githubUsername,
+      avatar_url: selectedUser.avatarUrl || `https://github.com/${selectedUser.githubUsername}.png`,
+      html_url: `https://github.com/${selectedUser.githubUsername}`,
+    });
+
+    // Reset loading states
+    setPrLoading(true);
+    setActionableLoading(true);
+    setActionableError(null);
+    setLinearUnavailable(false);
+
+    // Fetch all PRs (not filtered by user)
     fetch("/api/github/pull-requests")
       .then((res) => res.json())
       .then((data) => {
@@ -368,16 +370,24 @@ function Dashboard() {
       })
       .catch(() => setPrLoading(false));
 
+    // Fetch user-specific actionable data
     Promise.all([
-      fetch("/api/github/actionable-prs").then((res) => res.json()),
-      fetch("/api/linear/issues").then((res) => res.json()),
+      fetch(`/api/github/actionable-prs?userId=${githubUsername}`).then((res) => res.json()),
+      fetch(`/api/linear/issues?userId=${githubUsername}`).then((res) => res.json()),
     ])
       .then(([prData, linearData]) => {
         if (prData.error && linearData.error) {
           setActionableError(`${prData.error}; ${linearData.error}`);
         } else {
           setActionablePRs(prData.actionablePRs || []);
-          setLinearIssues(linearData.issues || []);
+          // Handle Linear unavailable state
+          if (linearData.linearUnavailable) {
+            setLinearIssues([]);
+            setLinearUnavailable(true);
+          } else {
+            setLinearIssues(linearData.issues || []);
+            setLinearUnavailable(false);
+          }
         }
         setActionableLoading(false);
         setNow(Date.now());
@@ -386,7 +396,14 @@ function Dashboard() {
         setActionableError("Failed to load");
         setActionableLoading(false);
       });
-  }, []);
+  }, [selectedUser]);
+
+  // Handle user selection
+  const handleUserSelect = (user: DashboardUser) => {
+    setSelectedUser(user);
+    localStorage.setItem("selectedUserId", user.githubUsername);
+    loadDailyPlanFromStorage(user.githubUsername);
+  };
 
   const actionableItems = combineActionableItems(actionablePRs, linearIssues);
   const activeItems = actionableItems.filter((i) => !i.isDraft && !i.isInReview && !i.isBlocked);
@@ -408,7 +425,7 @@ function Dashboard() {
   };
 
   const generateDailyPlan = (hours: number) => {
-    if (activeItems.length === 0) return;
+    if (activeItems.length === 0 || !selectedUser) return;
 
     // Subtract meeting hours from available focus time
     const availableHours = Math.max(0.5, hours - totalMeetingHours);
@@ -427,12 +444,12 @@ function Dashboard() {
           setDailyPlanItems(data.items || []);
           setDailyPlanTotal(data.totalHours || 0);
           setDailyPlanLastRun(newLastRun);
-          // Persist to localStorage (including selected meetings)
+          // Persist to user-specific localStorage (including selected meetings)
           const selectedMeetings = calendarEvents
             .filter((e) => selectedEventIds.has(e.id))
             .map((e) => ({ ...e }));
           localStorage.setItem(
-            "dailyPlan",
+            getDailyPlanKey(selectedUser.githubUsername),
             JSON.stringify({
               items: data.items || [],
               totalHours: data.totalHours || 0,
@@ -447,8 +464,10 @@ function Dashboard() {
   };
 
   const fetchCalendarEvents = () => {
+    if (!selectedUser) return;
+
     setCalendarLoading(true);
-    fetch("/api/calendar/events")
+    fetch(`/api/calendar/events?userId=${selectedUser.githubUsername}`)
       .then((res) => res.json())
       .then((data) => {
         const events = data.events || [];
@@ -515,21 +534,7 @@ function Dashboard() {
       <header className="border-b border-slate-800">
         <div className="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
           <div className="flex items-center gap-4">
-            {githubUser ? (
-              <>
-                <img
-                  src={githubUser.avatar_url}
-                  alt={githubUser.login}
-                  className="w-10 h-10 rounded-full ring-2 ring-slate-700"
-                />
-                <div>
-                  <h1 className="text-lg font-semibold text-white">
-                    {githubUser.name || githubUser.login}
-                  </h1>
-                  <p className="text-sm text-slate-500">@{githubUser.login}</p>
-                </div>
-              </>
-            ) : (
+            {usersLoading || !selectedUser ? (
               <div className="flex items-center gap-4">
                 <div className="w-10 h-10 rounded-full bg-slate-800 animate-pulse" />
                 <div className="space-y-2">
@@ -537,6 +542,12 @@ function Dashboard() {
                   <div className="h-3 w-16 bg-slate-800 rounded animate-pulse" />
                 </div>
               </div>
+            ) : (
+              <UserSelector
+                users={users}
+                selectedUser={selectedUser}
+                onSelect={handleUserSelect}
+              />
             )}
           </div>
           <button
@@ -570,10 +581,15 @@ function Dashboard() {
             <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm">
               {actionableError}
             </div>
-          ) : activeItems.length === 0 ? (
+          ) : activeItems.length === 0 && !linearUnavailable ? (
             <div className="p-6 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-center">
               <p className="text-emerald-400 font-medium">All caught up!</p>
               <p className="text-slate-500 text-sm mt-1">Nothing needs your attention right now.</p>
+            </div>
+          ) : activeItems.length === 0 && linearUnavailable ? (
+            <div className="p-6 bg-slate-900 border border-slate-800 rounded-xl text-center">
+              <p className="text-slate-400 font-medium">No GitHub PRs requiring action</p>
+              <p className="text-slate-500 text-sm mt-1">Linear data is only available for the configured Linear user.</p>
             </div>
           ) : (
             <>
@@ -600,6 +616,11 @@ function Dashboard() {
                 onToggleEvent={toggleCalendarEvent}
                 totalMeetingHours={totalMeetingHours}
               />
+              {linearUnavailable && (
+                <div className="mb-4 p-3 bg-slate-900/50 border border-slate-800 rounded-lg text-center">
+                  <p className="text-slate-500 text-xs">Linear issues not shown - only available for the configured Linear user</p>
+                </div>
+              )}
               {(() => {
                 // Filter out items already shown in Today's Dash
                 const dailyPlanIds = new Set(
