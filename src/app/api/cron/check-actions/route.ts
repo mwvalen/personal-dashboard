@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchActionablePullRequests } from "@/lib/github/client";
-import { fetchMyLinearIssues } from "@/lib/linear/client";
+import { fetchLinearIssues } from "@/lib/linear/client";
 import { sendDailyDigest } from "@/lib/slack/notifications";
 
 export async function GET(request: NextRequest) {
@@ -22,10 +22,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Fetch data in parallel
+    // Fetch data in parallel (no email = uses viewer/authenticated user)
     const [prResult, linearResult] = await Promise.all([
       fetchActionablePullRequests(),
-      fetchMyLinearIssues(),
+      fetchLinearIssues(),
     ]);
 
     if (prResult.error) {

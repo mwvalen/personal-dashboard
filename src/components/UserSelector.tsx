@@ -46,7 +46,7 @@ export function UserSelector({
     (user) =>
       (user.displayName || user.githubUsername).toLowerCase().includes(searchQuery.toLowerCase()) ||
       user.githubUsername.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchQuery.toLowerCase())
+      (user.email && user.email.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
   return (

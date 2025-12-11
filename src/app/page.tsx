@@ -96,13 +96,6 @@ function MagicLinkForm() {
   );
 }
 
-interface GitHubUser {
-  login: string;
-  name: string | null;
-  avatar_url: string;
-  html_url: string;
-}
-
 interface ActionablePRData {
   pr: {
     id: number;
@@ -255,7 +248,6 @@ function Dashboard() {
   const [selectedUser, setSelectedUser] = useState<DashboardUser | null>(null);
   const [usersLoading, setUsersLoading] = useState(true);
 
-  const [githubUser, setGithubUser] = useState<GitHubUser | null>(null);
   const [prResults, setPrResults] = useState<PRResult[] | null>(null);
   const [prLoading, setPrLoading] = useState(true);
   const [actionablePRs, setActionablePRs] = useState<ActionablePRData[]>([]);
@@ -340,26 +332,8 @@ function Dashboard() {
       });
   }, [loadDailyPlanFromStorage]);
 
-  // Fetch data when selected user changes
-  useEffect(() => {
-    if (!selectedUser) return;
-
-    const githubUsername = selectedUser.githubUsername;
-
-    // Set GitHub user info from selected user
-    setGithubUser({
-      login: selectedUser.githubUsername,
-      name: selectedUser.displayName || selectedUser.githubUsername,
-      avatar_url: selectedUser.avatarUrl || `https://github.com/${selectedUser.githubUsername}.png`,
-      html_url: `https://github.com/${selectedUser.githubUsername}`,
-    });
-
-    // Reset loading states
-    setPrLoading(true);
-    setActionableLoading(true);
-    setActionableError(null);
-    setLinearUnavailable(false);
-
+  // Fetch data for a user
+  const fetchUserData = useCallback((githubUsername: string) => {
     // Fetch all PRs (not filtered by user)
     fetch("/api/github/pull-requests")
       .then((res) => res.json())
@@ -396,10 +370,22 @@ function Dashboard() {
         setActionableError("Failed to load");
         setActionableLoading(false);
       });
-  }, [selectedUser]);
+  }, []);
+
+  // Fetch data when selected user changes
+  useEffect(() => {
+    if (!selectedUser) return;
+    fetchUserData(selectedUser.githubUsername);
+  }, [selectedUser, fetchUserData]);
 
   // Handle user selection
   const handleUserSelect = (user: DashboardUser) => {
+    // Reset loading states before switching
+    setPrLoading(true);
+    setActionableLoading(true);
+    setActionableError(null);
+    setLinearUnavailable(false);
+
     setSelectedUser(user);
     localStorage.setItem("selectedUserId", user.githubUsername);
     loadDailyPlanFromStorage(user.githubUsername);
