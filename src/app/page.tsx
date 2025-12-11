@@ -215,6 +215,13 @@ function combineActionableItems(
       continue;
     }
 
+    const stateName = issue.state.name.toLowerCase();
+
+    // Skip canceled issues unless they're specifically "Stale"
+    if (issue.state.type === "canceled" && stateName !== "stale") {
+      continue;
+    }
+
     const priorityRank = priorityOrder[issue.priority] ?? 5;
     let sortPriority: number;
     if (issue.priority === 1) {
@@ -230,20 +237,14 @@ function combineActionableItems(
       (rel) => rel.type === "blocks"
     );
 
-    // Check if issue is stale (not updated in the last 7 days)
-    const daysSinceUpdate = Math.floor(
-      (Date.now() - new Date(issue.updatedAt).getTime()) / (1000 * 60 * 60 * 24)
-    );
-    const isStale = daysSinceUpdate >= 7;
-
     items.push({
       type: "linear",
       sortPriority,
       linearIssue: issue,
       isDraft: false,
-      isInReview: issue.state.name.toLowerCase().includes("review"),
-      isBlocked: issue.state.name.toLowerCase().includes("blocked") || isBlockedByRelation,
-      isStale,
+      isInReview: stateName.includes("review"),
+      isBlocked: stateName.includes("blocked") || isBlockedByRelation,
+      isStale: stateName === "stale",
     });
   }
 
@@ -275,6 +276,7 @@ function Dashboard() {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [selectedEventIds, setSelectedEventIds] = useState<Set<string>>(new Set());
+  const [showAllStale, setShowAllStale] = useState(false);
   const router = useRouter();
   const supabase = createClient();
 
@@ -699,17 +701,25 @@ function Dashboard() {
         {/* Stale Section */}
         {!actionableLoading && !actionableError && staleItems.length > 0 && (
           <section>
-            <div className="flex items-center gap-3 mb-4">
+            <button
+              onClick={() => setShowAllStale(!showAllStale)}
+              className="flex items-center gap-3 mb-4 hover:opacity-80 transition-opacity"
+            >
               <h2 className="text-xl font-semibold text-white">Stale</h2>
               <span className="px-2.5 py-0.5 text-xs font-medium bg-amber-500/20 text-amber-400 rounded-full">
                 {staleItems.length}
               </span>
-            </div>
-            <div className="space-y-3">
-              {staleItems.map((item) => (
-                <ActionableItemCard key={item.pr?.id || item.linearIssue?.id} item={item} now={now} />
-              ))}
-            </div>
+              <span className="text-slate-500 text-sm">
+                {showAllStale ? "▼" : "▶"}
+              </span>
+            </button>
+            {showAllStale && (
+              <div className="space-y-3">
+                {staleItems.map((item) => (
+                  <ActionableItemCard key={item.pr?.id || item.linearIssue?.id} item={item} now={now} />
+                ))}
+              </div>
+            )}
           </section>
         )}
 

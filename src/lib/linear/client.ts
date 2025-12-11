@@ -54,7 +54,7 @@ class LinearClient {
         issues(
           filter: {
             assignee: { email: { eq: "${assigneeEmail}" } }
-            state: { type: { in: ["started", "unstarted"] } }
+            state: { type: { in: ["started", "unstarted", "canceled"] } }
           }
           first: 100
         ) {
@@ -100,7 +100,7 @@ class LinearClient {
           assignedIssues(
             filter: {
               state: {
-                type: { in: ["started", "unstarted"] }
+                type: { in: ["started", "unstarted", "canceled"] }
               }
             }
             first: 100
