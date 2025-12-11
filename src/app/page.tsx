@@ -128,6 +128,7 @@ interface LinearIssueData {
     type: string;
   };
   createdAt: string;
+  updatedAt: string;
   attachments?: {
     nodes: Array<{
       url: string;
@@ -157,6 +158,7 @@ interface ActionableItem {
   isDraft?: boolean;
   isInReview?: boolean;
   isBlocked?: boolean;
+  isStale?: boolean;
 }
 
 interface DailyPlanItem extends ActionableItem {
@@ -228,6 +230,12 @@ function combineActionableItems(
       (rel) => rel.type === "blocks"
     );
 
+    // Check if issue is stale (not updated in the last 7 days)
+    const daysSinceUpdate = Math.floor(
+      (Date.now() - new Date(issue.updatedAt).getTime()) / (1000 * 60 * 60 * 24)
+    );
+    const isStale = daysSinceUpdate >= 7;
+
     items.push({
       type: "linear",
       sortPriority,
@@ -235,6 +243,7 @@ function combineActionableItems(
       isDraft: false,
       isInReview: issue.state.name.toLowerCase().includes("review"),
       isBlocked: issue.state.name.toLowerCase().includes("blocked") || isBlockedByRelation,
+      isStale,
     });
   }
 
@@ -400,10 +409,11 @@ function Dashboard() {
   };
 
   const actionableItems = combineActionableItems(actionablePRs, linearIssues);
-  const activeItems = actionableItems.filter((i) => !i.isDraft && !i.isInReview && !i.isBlocked);
+  const activeItems = actionableItems.filter((i) => !i.isDraft && !i.isInReview && !i.isBlocked && !i.isStale);
   const draftItems = actionableItems.filter((i) => i.isDraft);
   const inReviewItems = actionableItems.filter((i) => i.isInReview);
-  const blockedItems = actionableItems.filter((i) => i.isBlocked);
+  const blockedItems = actionableItems.filter((i) => !i.isStale && i.isBlocked);
+  const staleItems = actionableItems.filter((i) => i.isStale && !i.isDraft && !i.isInReview);
 
   // Calculate total hours of selected calendar events
   const totalMeetingHours = calendarEvents
@@ -681,6 +691,23 @@ function Dashboard() {
             <div className="space-y-3">
               {blockedItems.map((item) => (
                 <ActionableItemCard key={item.linearIssue?.id} item={item} now={now} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Stale Section */}
+        {!actionableLoading && !actionableError && staleItems.length > 0 && (
+          <section>
+            <div className="flex items-center gap-3 mb-4">
+              <h2 className="text-xl font-semibold text-white">Stale</h2>
+              <span className="px-2.5 py-0.5 text-xs font-medium bg-amber-500/20 text-amber-400 rounded-full">
+                {staleItems.length}
+              </span>
+            </div>
+            <div className="space-y-3">
+              {staleItems.map((item) => (
+                <ActionableItemCard key={item.pr?.id || item.linearIssue?.id} item={item} now={now} />
               ))}
             </div>
           </section>

@@ -91,7 +91,7 @@ export default function LoginPage() {
       <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-lg shadow">
         <div>
           <h1 className="text-3xl font-bold text-center text-gray-900">
-            Valens Dash
+            Superadvisor Actions
           </h1>
           <p className="mt-2 text-center text-sm text-gray-600">
             Enter your email to receive a magic link

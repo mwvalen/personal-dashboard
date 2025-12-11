@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Valens Dash",
-  description: "Personal Dashboard",
+  title: "Superadvisor Actions",
+  description: "Superadvisor Actions Dashboard",
 };
 
 export default function RootLayout({
