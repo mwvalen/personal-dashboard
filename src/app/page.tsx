@@ -378,6 +378,14 @@ function Dashboard() {
     fetchUserData(selectedUser.githubUsername);
   }, [selectedUser, fetchUserData]);
 
+  // Update `now` every minute so meetings transition to completed in real-time
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNow(Date.now());
+    }, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Handle user selection
   const handleUserSelect = (user: DashboardUser) => {
     // Reset loading states before switching

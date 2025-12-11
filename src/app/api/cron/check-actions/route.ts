@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
       console.error("Failed to fetch Linear issues:", linearResult.error);
     }
 
-    const dashboardUrl = "https://personal-dashboard-iota-three.vercel.app";
+    const dashboardUrl = process.env.NEXT_PUBLIC_APP_URL!;
 
     // Send daily digest
     const slackResult = await sendDailyDigest({
