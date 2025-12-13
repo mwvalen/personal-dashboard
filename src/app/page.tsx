@@ -277,6 +277,8 @@ function Dashboard() {
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [selectedEventIds, setSelectedEventIds] = useState<Set<string>>(new Set());
   const [showAllStale, setShowAllStale] = useState(false);
+  const [excludedItemIds, setExcludedItemIds] = useState<Set<string>>(new Set());
+  const [prioritizedItemIds, setPrioritizedItemIds] = useState<Set<string>>(new Set());
   const router = useRouter();
   const supabase = createClient();
 
@@ -433,6 +435,17 @@ function Dashboard() {
   const generateDailyPlan = (hours: number) => {
     if (activeItems.length === 0 || !selectedUser) return;
 
+    // Filter out excluded items before sending to API
+    const itemsToSend = activeItems.filter((item) => {
+      const itemId = String(item.pr?.id || item.linearIssue?.id);
+      return !excludedItemIds.has(itemId);
+    });
+
+    if (itemsToSend.length === 0) {
+      // All items excluded, nothing to generate
+      return;
+    }
+
     // Subtract meeting hours from available focus time
     const availableHours = Math.max(0.5, hours - totalMeetingHours);
 
@@ -441,13 +454,25 @@ function Dashboard() {
     fetch("/api/daily-plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: activeItems, maxHours: availableHours }),
+      body: JSON.stringify({ items: itemsToSend, maxHours: availableHours }),
     })
       .then((res) => res.json())
       .then((data) => {
         if (!data.error) {
           const newLastRun = new Date();
-          setDailyPlanItems(data.items || []);
+
+          // Sort results: prioritized items first, then others
+          const sortedItems = [...(data.items || [])].sort((a: DailyPlanItem, b: DailyPlanItem) => {
+            const aId = String(a.pr?.id || a.linearIssue?.id);
+            const bId = String(b.pr?.id || b.linearIssue?.id);
+            const aPrioritized = prioritizedItemIds.has(aId);
+            const bPrioritized = prioritizedItemIds.has(bId);
+            if (aPrioritized && !bPrioritized) return -1;
+            if (!aPrioritized && bPrioritized) return 1;
+            return 0;
+          });
+
+          setDailyPlanItems(sortedItems);
           setDailyPlanTotal(data.totalHours || 0);
           setDailyPlanLastRun(newLastRun);
           // Persist to user-specific localStorage (including selected meetings)
@@ -457,7 +482,7 @@ function Dashboard() {
           localStorage.setItem(
             getDailyPlanKey(selectedUser.githubUsername),
             JSON.stringify({
-              items: data.items || [],
+              items: sortedItems,
               totalHours: data.totalHours || 0,
               lastRun: newLastRun.toISOString(),
               meetings: selectedMeetings,
@@ -518,6 +543,44 @@ function Dashboard() {
         newSet.delete(eventId);
       } else {
         newSet.add(eventId);
+      }
+      return newSet;
+    });
+  };
+
+  // Toggle exclude state for an item (excludes from generation)
+  const toggleExcludeItem = (itemId: string) => {
+    setExcludedItemIds((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(itemId)) {
+        newSet.delete(itemId);
+      } else {
+        newSet.add(itemId);
+        // Remove from prioritized if excluding
+        setPrioritizedItemIds((p) => {
+          const pNew = new Set(p);
+          pNew.delete(itemId);
+          return pNew;
+        });
+      }
+      return newSet;
+    });
+  };
+
+  // Toggle prioritize state for an item (prioritizes to top of results)
+  const togglePrioritizeItem = (itemId: string) => {
+    setPrioritizedItemIds((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(itemId)) {
+        newSet.delete(itemId);
+      } else {
+        newSet.add(itemId);
+        // Remove from excluded if prioritizing
+        setExcludedItemIds((e) => {
+          const eNew = new Set(e);
+          eNew.delete(itemId);
+          return eNew;
+        });
       }
       return newSet;
     });
@@ -621,6 +684,11 @@ function Dashboard() {
                 selectedEventIds={selectedEventIds}
                 onToggleEvent={toggleCalendarEvent}
                 totalMeetingHours={totalMeetingHours}
+                activeItems={activeItems}
+                excludedItemIds={excludedItemIds}
+                prioritizedItemIds={prioritizedItemIds}
+                onToggleExclude={toggleExcludeItem}
+                onTogglePrioritize={togglePrioritizeItem}
               />
               {linearUnavailable && (
                 <div className="mb-4 p-3 bg-slate-900/50 border border-slate-800 rounded-lg text-center">
@@ -888,6 +956,11 @@ function TodaysDashSection({
   selectedEventIds,
   onToggleEvent,
   totalMeetingHours,
+  activeItems,
+  excludedItemIds,
+  prioritizedItemIds,
+  onToggleExclude,
+  onTogglePrioritize,
 }: {
   items: DailyPlanItem[];
   totalHours: number;
@@ -910,6 +983,11 @@ function TodaysDashSection({
   selectedEventIds: Set<string>;
   onToggleEvent: (eventId: string) => void;
   totalMeetingHours: number;
+  activeItems: ActionableItem[];
+  excludedItemIds: Set<string>;
+  prioritizedItemIds: Set<string>;
+  onToggleExclude: (itemId: string) => void;
+  onTogglePrioritize: (itemId: string) => void;
 }) {
   const formatLastRun = (date: Date) => {
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -952,11 +1030,12 @@ function TodaysDashSection({
         </div>
       )}
 
-      {/* Hours Prompt Modal */}
+      {/* Hours Prompt Modal - Full screen overlay */}
       {showHoursPrompt && (
-        <div className="absolute inset-0 bg-slate-950/90 rounded-xl flex items-center justify-center z-10">
-          <div className="text-center p-4 max-w-sm w-full">
-            <p className="text-white text-sm mb-3">How many hours of focused work today?</p>
+        <div className="fixed inset-0 bg-slate-950/95 backdrop-blur-sm flex items-center justify-center z-50 p-6">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-lg w-full max-h-[85vh] overflow-y-auto shadow-2xl">
+            <h2 className="text-white text-lg font-semibold mb-4 text-center">Plan Your Day</h2>
+            <p className="text-slate-400 text-sm mb-4 text-center">How many hours of focused work today?</p>
             <div className="flex items-center justify-center gap-2 mb-4">
               <input
                 type="number"
@@ -971,13 +1050,13 @@ function TodaysDashSection({
 
             {/* Calendar Events Section */}
             {calendarLoading ? (
-              <div className="mb-4">
+              <div className="mb-6">
                 <div className="h-4 w-32 bg-slate-800 rounded animate-pulse mx-auto" />
               </div>
             ) : calendarEvents.length > 0 && (
-              <div className="mb-4 text-left">
-                <p className="text-slate-400 text-xs mb-2 text-center">Select meetings that take up time:</p>
-                <div className="max-h-40 overflow-y-auto space-y-1">
+              <div className="mb-6 text-left">
+                <p className="text-slate-400 text-xs mb-2 font-medium uppercase tracking-wide">Meetings</p>
+                <div className="max-h-40 overflow-y-auto space-y-1 bg-slate-800/30 rounded-lg p-2">
                   {calendarEvents.filter((e) => !e.isAllDay).map((event) => {
                     const startTime = new Date(event.start);
                     const endTime = new Date(event.end);
@@ -1010,18 +1089,91 @@ function TodaysDashSection({
               </div>
             )}
 
-            <div className="flex gap-2 justify-center">
+            {/* Item Selection Section */}
+            {activeItems.length > 0 && (
+              <div className="mb-6 text-left">
+                <p className="text-slate-400 text-xs mb-2 font-medium uppercase tracking-wide">Tasks to Include</p>
+                <div className="max-h-[40vh] overflow-y-auto space-y-1 bg-slate-800/30 rounded-lg p-2">
+                  {activeItems.map((item) => {
+                    const itemId = String(item.pr?.id || item.linearIssue?.id);
+                    const isExcluded = excludedItemIds.has(itemId);
+                    const isPrioritized = prioritizedItemIds.has(itemId);
+                    const title = item.linearIssue?.title || item.pr?.title || "";
+                    const identifier = item.linearIssue?.identifier || (item.pr ? `#${item.pr.number}` : "");
+                    const priorityLabel = item.linearIssue?.priorityLabel;
+
+                    return (
+                      <div
+                        key={itemId}
+                        className={`flex items-center gap-2 p-2 rounded ${isExcluded ? "opacity-40" : ""} ${isPrioritized ? "bg-emerald-500/10" : "hover:bg-slate-800/50"}`}
+                      >
+                        <button
+                          onClick={() => onTogglePrioritize(itemId)}
+                          className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                            isPrioritized
+                              ? "bg-emerald-500/30 text-emerald-400"
+                              : "bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300"
+                          }`}
+                          title={isPrioritized ? "Remove priority" : "Prioritize to top"}
+                        >
+                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => onToggleExclude(itemId)}
+                          className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                            isExcluded
+                              ? "bg-red-500/30 text-red-400"
+                              : "bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300"
+                          }`}
+                          title={isExcluded ? "Include" : "Exclude"}
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                        <span className={`text-xs flex-1 truncate ${isExcluded ? "text-slate-500 line-through" : "text-slate-300"}`}>
+                          {title}
+                        </span>
+                        {identifier && (
+                          <span className="text-xs text-slate-500 flex-shrink-0">{identifier}</span>
+                        )}
+                        {priorityLabel && (
+                          <span className={`px-1.5 py-0.5 text-xs rounded flex-shrink-0 ${
+                            priorityLabel === "Urgent" ? "bg-red-500/20 text-red-400" :
+                            priorityLabel === "High" ? "bg-orange-500/20 text-orange-400" :
+                            priorityLabel === "Medium" ? "bg-yellow-500/20 text-yellow-400" :
+                            "bg-slate-700 text-slate-400"
+                          }`}>
+                            {priorityLabel}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                {(prioritizedItemIds.size > 0 || excludedItemIds.size > 0) && (
+                  <div className="mt-2 pt-2 border-t border-slate-800 flex justify-between text-xs">
+                    <span className="text-emerald-400">{prioritizedItemIds.size} prioritized</span>
+                    <span className="text-red-400">{excludedItemIds.size} excluded</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex gap-3 justify-center pt-2">
               <button
                 onClick={onHoursCancel}
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+                className="px-5 py-2.5 text-sm text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={onHoursConfirm}
-                className="px-3 py-1.5 text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded transition-colors"
+                className="px-5 py-2.5 text-sm bg-blue-600 text-white hover:bg-blue-500 rounded-lg transition-colors font-medium"
               >
-                Generate
+                Generate Plan
               </button>
             </div>
           </div>
