@@ -2,12 +2,29 @@
 
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type { User } from "@supabase/supabase-js";
 import type { GitHubPullRequest } from "@/types/github";
 import type { CalendarEvent } from "@/types/calendar";
 import type { DashboardUser } from "@/types/user";
 import { UserSelector } from "@/components/UserSelector";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 interface PRResult {
   repository: { owner: string; repo: string };
@@ -167,6 +184,49 @@ interface DailyPlanItem extends ActionableItem {
   isOverflow?: boolean;
 }
 
+// Category definitions for drag-and-drop grouping
+type CategoryKey = "urgent" | "pr" | "inprogress-high" | "inprogress-medium" | "inprogress-low" | "inprogress-none" | "todo-high" | "todo-medium" | "todo-low" | "todo-none";
+
+const CATEGORY_LABELS: Record<CategoryKey, string> = {
+  "urgent": "Urgent Issues",
+  "pr": "PR Actions",
+  "inprogress-high": "In Progress - High",
+  "inprogress-medium": "In Progress - Medium",
+  "inprogress-low": "In Progress - Low",
+  "inprogress-none": "In Progress - No Priority",
+  "todo-high": "Todo - High",
+  "todo-medium": "Todo - Medium",
+  "todo-low": "Todo - Low",
+  "todo-none": "Todo - No Priority",
+};
+
+const CATEGORY_ORDER: CategoryKey[] = [
+  "urgent", "pr", "inprogress-high", "inprogress-medium", "inprogress-low", "inprogress-none",
+  "todo-high", "todo-medium", "todo-low", "todo-none"
+];
+
+function getCategoryKey(item: ActionableItem): CategoryKey {
+  const sortPriority = item.sortPriority || 999;
+  const section = Math.floor(sortPriority / 100);
+  const priority = item.linearIssue?.priority ?? 0;
+
+  if (section === 1) return "urgent";
+  if (section === 2) return "pr";
+  if (section === 3) {
+    if (priority === 1) return "inprogress-high"; // Urgent in progress treated as high
+    if (priority === 2) return "inprogress-high";
+    if (priority === 3) return "inprogress-medium";
+    if (priority === 4) return "inprogress-low";
+    return "inprogress-none";
+  }
+  // section 4 or fallback = todo
+  if (priority === 1) return "todo-high"; // Urgent todo treated as high
+  if (priority === 2) return "todo-high";
+  if (priority === 3) return "todo-medium";
+  if (priority === 4) return "todo-low";
+  return "todo-none";
+}
+
 function combineActionableItems(
   prs: ActionablePRData[],
   linearIssues: LinearIssueData[]
@@ -280,13 +340,40 @@ function Dashboard() {
   const [selectedEventIds, setSelectedEventIds] = useState<Set<string>>(new Set());
   const [showAllStale, setShowAllStale] = useState(false);
   const [excludedItemIds, setExcludedItemIds] = useState<Set<string>>(new Set());
-  const [prioritizedItemIds, setPrioritizedItemIds] = useState<Set<string>>(new Set());
+  const [itemOrder, setItemOrder] = useState<Record<string, string[]>>({});
   const [customHourEstimates, setCustomHourEstimates] = useState<Map<string, number>>(new Map());
   const router = useRouter();
   const supabase = createClient();
 
   // Helper to get localStorage key for current user (using GitHub username)
   const getDailyPlanKey = useCallback((githubUsername: string) => `dailyPlan_${githubUsername}`, []);
+  const getItemOrderKey = useCallback((githubUsername: string) => `itemOrder_${githubUsername}`, []);
+
+  // Load item order from localStorage for a specific user
+  const loadItemOrderFromStorage = useCallback((githubUsername: string) => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = localStorage.getItem(getItemOrderKey(githubUsername));
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        setItemOrder(parsed || {});
+      } else {
+        setItemOrder({});
+      }
+    } catch {
+      setItemOrder({});
+    }
+  }, [getItemOrderKey]);
+
+  // Save item order to localStorage
+  const saveItemOrderToStorage = useCallback((githubUsername: string, order: Record<string, string[]>) => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(getItemOrderKey(githubUsername), JSON.stringify(order));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [getItemOrderKey]);
 
   // Load daily plan from localStorage for a specific user
   const loadDailyPlanFromStorage = useCallback((githubUsername: string) => {
@@ -341,6 +428,7 @@ function Dashboard() {
           setSelectedUser(userToSelect);
           if (userToSelect) {
             loadDailyPlanFromStorage(userToSelect.githubUsername);
+            loadItemOrderFromStorage(userToSelect.githubUsername);
           }
         }
         setUsersLoading(false);
@@ -348,7 +436,7 @@ function Dashboard() {
       .catch(() => {
         setUsersLoading(false);
       });
-  }, [loadDailyPlanFromStorage]);
+  }, [loadDailyPlanFromStorage, loadItemOrderFromStorage]);
 
   // Fetch data for a user
   const fetchUserData = useCallback((githubUsername: string) => {
@@ -415,6 +503,7 @@ function Dashboard() {
     setSelectedUser(user);
     localStorage.setItem("selectedUserId", user.githubUsername);
     loadDailyPlanFromStorage(user.githubUsername);
+    loadItemOrderFromStorage(user.githubUsername);
   };
 
   const actionableItems = combineActionableItems(actionablePRs, linearIssues);
@@ -469,7 +558,7 @@ function Dashboard() {
         items: itemsToSend,
         maxHours: availableHours,
         customHours: customHoursObj,
-        prioritizedIds: Array.from(prioritizedItemIds),
+        itemOrder: itemOrder,
       }),
     })
       .then((res) => res.json())
@@ -477,26 +566,34 @@ function Dashboard() {
         if (!data.error) {
           const newLastRun = new Date();
 
-          // Sort results: prioritized items first WITHIN their section
-          // Sections are based on sortPriority: 100s=urgent, 200s=PRs, 300s=in progress, 400s=backlog
+          // Sort results using custom item order within each category
+          // Categories are based on sortPriority: 100s=urgent, 200s=PRs, 300s=in progress, 400s=backlog
           const sortedItems = [...(data.items || [])].sort((a: DailyPlanItem, b: DailyPlanItem) => {
-            const aSection = Math.floor((a.sortPriority || 999) / 100);
-            const bSection = Math.floor((b.sortPriority || 999) / 100);
+            const aCategory = getCategoryKey(a);
+            const bCategory = getCategoryKey(b);
 
-            // First, sort by section
-            if (aSection !== bSection) {
-              return aSection - bSection;
+            // First, sort by category order
+            const aCatIndex = CATEGORY_ORDER.indexOf(aCategory);
+            const bCatIndex = CATEGORY_ORDER.indexOf(bCategory);
+            if (aCatIndex !== bCatIndex) {
+              return aCatIndex - bCatIndex;
             }
 
-            // Within same section, prioritized items come first
+            // Within same category, use custom order if available
             const aId = String(a.pr?.id || a.linearIssue?.id);
             const bId = String(b.pr?.id || b.linearIssue?.id);
-            const aPrioritized = prioritizedItemIds.has(aId);
-            const bPrioritized = prioritizedItemIds.has(bId);
-            if (aPrioritized && !bPrioritized) return -1;
-            if (!aPrioritized && bPrioritized) return 1;
+            const categoryItemOrder = itemOrder[aCategory] || [];
+            const aOrderIndex = categoryItemOrder.indexOf(aId);
+            const bOrderIndex = categoryItemOrder.indexOf(bId);
 
-            // Then by original sortPriority within section
+            // Items with custom order come before those without
+            if (aOrderIndex !== -1 && bOrderIndex !== -1) {
+              return aOrderIndex - bOrderIndex;
+            }
+            if (aOrderIndex !== -1) return -1;
+            if (bOrderIndex !== -1) return 1;
+
+            // Fall back to original sortPriority
             return (a.sortPriority || 999) - (b.sortPriority || 999);
           });
 
@@ -586,31 +683,6 @@ function Dashboard() {
         newSet.delete(itemId);
       } else {
         newSet.add(itemId);
-        // Remove from prioritized if excluding
-        setPrioritizedItemIds((p) => {
-          const pNew = new Set(p);
-          pNew.delete(itemId);
-          return pNew;
-        });
-      }
-      return newSet;
-    });
-  };
-
-  // Toggle prioritize state for an item (prioritizes to top of results)
-  const togglePrioritizeItem = (itemId: string) => {
-    setPrioritizedItemIds((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(itemId)) {
-        newSet.delete(itemId);
-      } else {
-        newSet.add(itemId);
-        // Remove from excluded if prioritizing
-        setExcludedItemIds((e) => {
-          const eNew = new Set(e);
-          eNew.delete(itemId);
-          return eNew;
-        });
       }
       return newSet;
     });
@@ -628,6 +700,14 @@ function Dashboard() {
       return newMap;
     });
   };
+
+  // Update item order and save to localStorage
+  const handleItemOrderChange = useCallback((newOrder: Record<string, string[]>) => {
+    setItemOrder(newOrder);
+    if (selectedUser) {
+      saveItemOrderToStorage(selectedUser.githubUsername, newOrder);
+    }
+  }, [selectedUser, saveItemOrderToStorage]);
 
   const handleHoursConfirm = () => {
     generateDailyPlan(selectedHours);
@@ -730,11 +810,11 @@ function Dashboard() {
                 totalMeetingHours={totalMeetingHours}
                 activeItems={activeItems}
                 excludedItemIds={excludedItemIds}
-                prioritizedItemIds={prioritizedItemIds}
                 onToggleExclude={toggleExcludeItem}
-                onTogglePrioritize={togglePrioritizeItem}
                 customHourEstimates={customHourEstimates}
                 onSetCustomHours={setCustomHours}
+                itemOrder={itemOrder}
+                onItemOrderChange={handleItemOrderChange}
               />
               {linearUnavailable && (
                 <div className="mb-4 p-3 bg-slate-900/50 border border-slate-800 rounded-lg text-center">
@@ -980,6 +1060,268 @@ function ActionableItemCard({ item, now }: { item: ActionableItem; now: number }
   return null;
 }
 
+// Component for task selection with drag-and-drop reordering by category
+function TaskSelectionWithDnd({
+  activeItems,
+  excludedItemIds,
+  onToggleExclude,
+  customHourEstimates,
+  onSetCustomHours,
+  itemOrder,
+  onItemOrderChange,
+}: {
+  activeItems: ActionableItem[];
+  excludedItemIds: Set<string>;
+  onToggleExclude: (itemId: string) => void;
+  customHourEstimates: Map<string, number>;
+  onSetCustomHours: (itemId: string, hours: number | null) => void;
+  itemOrder: Record<string, string[]>;
+  onItemOrderChange: (order: Record<string, string[]>) => void;
+}) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  // Group items by category
+  const categorizedItems = useMemo(() => {
+    const groups: Record<CategoryKey, ActionableItem[]> = {
+      "urgent": [],
+      "pr": [],
+      "inprogress-high": [],
+      "inprogress-medium": [],
+      "inprogress-low": [],
+      "inprogress-none": [],
+      "todo-high": [],
+      "todo-medium": [],
+      "todo-low": [],
+      "todo-none": [],
+    };
+
+    for (const item of activeItems) {
+      const category = getCategoryKey(item);
+      groups[category].push(item);
+    }
+
+    // Sort each category by custom order if available, otherwise by sortPriority
+    for (const category of CATEGORY_ORDER) {
+      const categoryItems = groups[category];
+      const order = itemOrder[category] || [];
+
+      categoryItems.sort((a, b) => {
+        const aId = String(a.pr?.id || a.linearIssue?.id);
+        const bId = String(b.pr?.id || b.linearIssue?.id);
+        const aIndex = order.indexOf(aId);
+        const bIndex = order.indexOf(bId);
+
+        if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+        if (aIndex !== -1) return -1;
+        if (bIndex !== -1) return 1;
+        return (a.sortPriority || 999) - (b.sortPriority || 999);
+      });
+    }
+
+    return groups;
+  }, [activeItems, itemOrder]);
+
+  // Handle drag end - reorder within category
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    // Find which category contains the active item
+    let activeCategory: CategoryKey | null = null;
+    for (const category of CATEGORY_ORDER) {
+      const items = categorizedItems[category];
+      if (items.some(item => String(item.pr?.id || item.linearIssue?.id) === active.id)) {
+        activeCategory = category;
+        break;
+      }
+    }
+
+    if (!activeCategory) return;
+
+    // Check if over item is in the same category
+    const categoryItems = categorizedItems[activeCategory];
+    const overInSameCategory = categoryItems.some(
+      item => String(item.pr?.id || item.linearIssue?.id) === over.id
+    );
+
+    if (!overInSameCategory) return; // Don't allow cross-category drops
+
+    // Get current order for this category
+    const currentIds = categoryItems.map(item => String(item.pr?.id || item.linearIssue?.id));
+    const oldIndex = currentIds.indexOf(String(active.id));
+    const newIndex = currentIds.indexOf(String(over.id));
+
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const newOrder = arrayMove(currentIds, oldIndex, newIndex);
+
+    onItemOrderChange({
+      ...itemOrder,
+      [activeCategory]: newOrder,
+    });
+  }, [categorizedItems, itemOrder, onItemOrderChange]);
+
+  if (activeItems.length === 0) return null;
+
+  // Get categories that have items
+  const nonEmptyCategories = CATEGORY_ORDER.filter(
+    category => categorizedItems[category].length > 0
+  );
+
+  return (
+    <div className="mb-6 text-left">
+      <p className="text-slate-400 text-xs mb-2 font-medium uppercase tracking-wide">Tasks to Include</p>
+      <p className="text-slate-500 text-xs mb-2">Drag to reorder within each category</p>
+      <div className="max-h-[40vh] overflow-y-auto bg-slate-800/30 rounded-lg p-2">
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          {nonEmptyCategories.map((category) => {
+            const items = categorizedItems[category];
+            const itemIds = items.map(item => String(item.pr?.id || item.linearIssue?.id));
+
+            return (
+              <div key={category} className="mb-3 last:mb-0">
+                <p className="text-slate-500 text-xs font-medium mb-1 px-1">{CATEGORY_LABELS[category]}</p>
+                <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
+                  <div className="space-y-1">
+                    {items.map((item) => (
+                      <SortableTaskItem
+                        key={String(item.pr?.id || item.linearIssue?.id)}
+                        item={item}
+                        isExcluded={excludedItemIds.has(String(item.pr?.id || item.linearIssue?.id))}
+                        onToggleExclude={onToggleExclude}
+                        customHours={customHourEstimates.get(String(item.pr?.id || item.linearIssue?.id))}
+                        onSetCustomHours={onSetCustomHours}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+              </div>
+            );
+          })}
+        </DndContext>
+      </div>
+      {(excludedItemIds.size > 0 || customHourEstimates.size > 0) && (
+        <div className="mt-2 pt-2 border-t border-slate-800 flex justify-end gap-4 text-xs">
+          {customHourEstimates.size > 0 && (
+            <span className="text-blue-400">{customHourEstimates.size} custom hrs</span>
+          )}
+          <span className="text-red-400">{excludedItemIds.size} excluded</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Sortable item component for drag-and-drop reordering
+function SortableTaskItem({
+  item,
+  isExcluded,
+  onToggleExclude,
+  customHours,
+  onSetCustomHours,
+}: {
+  item: ActionableItem;
+  isExcluded: boolean;
+  onToggleExclude: (itemId: string) => void;
+  customHours: number | undefined;
+  onSetCustomHours: (itemId: string, hours: number | null) => void;
+}) {
+  const itemId = String(item.pr?.id || item.linearIssue?.id);
+  const title = item.linearIssue?.title || item.pr?.title || "";
+  const identifier = item.linearIssue?.identifier || (item.pr ? `#${item.pr.number}` : "");
+  const priorityLabel = item.linearIssue?.priorityLabel;
+
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: itemId });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center gap-2 p-2 rounded ${isExcluded ? "opacity-40" : ""} ${isDragging ? "bg-slate-700/50 shadow-lg z-10" : "hover:bg-slate-800/50"}`}
+    >
+      {/* Drag handle */}
+      <button
+        {...attributes}
+        {...listeners}
+        className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0 cursor-grab active:cursor-grabbing text-slate-500 hover:text-slate-300 hover:bg-slate-700"
+        title="Drag to reorder"
+      >
+        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />
+        </svg>
+      </button>
+      <button
+        onClick={() => onToggleExclude(itemId)}
+        className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+          isExcluded
+            ? "bg-red-500/30 text-red-400"
+            : "bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300"
+        }`}
+        title={isExcluded ? "Include" : "Exclude"}
+      >
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+      <span className={`text-xs flex-1 truncate ${isExcluded ? "text-slate-500 line-through" : "text-slate-300"}`}>
+        {title}
+      </span>
+      {identifier && (
+        <span className="text-xs text-slate-500 flex-shrink-0">{identifier}</span>
+      )}
+      {priorityLabel && (
+        <span className={`px-1.5 py-0.5 text-xs rounded flex-shrink-0 ${
+          priorityLabel === "Urgent" ? "bg-red-500/20 text-red-400" :
+          priorityLabel === "High" ? "bg-orange-500/20 text-orange-400" :
+          priorityLabel === "Medium" ? "bg-yellow-500/20 text-yellow-400" :
+          "bg-slate-700 text-slate-400"
+        }`}>
+          {priorityLabel}
+        </span>
+      )}
+      <input
+        type="number"
+        min="0.5"
+        max="8"
+        step="0.5"
+        placeholder="hrs"
+        value={customHours || ""}
+        onChange={(e) => {
+          const val = parseFloat(e.target.value);
+          onSetCustomHours(itemId, isNaN(val) ? null : val);
+        }}
+        className="w-12 px-1.5 py-0.5 text-xs text-center bg-slate-800 border border-slate-600 rounded text-white placeholder-slate-500 focus:outline-none focus:border-slate-400 flex-shrink-0"
+        title="Custom hours (leave empty for AI estimate)"
+      />
+    </div>
+  );
+}
+
 function TodaysDashSection({
   items,
   totalHours,
@@ -1005,11 +1347,11 @@ function TodaysDashSection({
   totalMeetingHours,
   activeItems,
   excludedItemIds,
-  prioritizedItemIds,
   onToggleExclude,
-  onTogglePrioritize,
   customHourEstimates,
   onSetCustomHours,
+  itemOrder,
+  onItemOrderChange,
 }: {
   items: DailyPlanItem[];
   totalHours: number;
@@ -1035,11 +1377,11 @@ function TodaysDashSection({
   totalMeetingHours: number;
   activeItems: ActionableItem[];
   excludedItemIds: Set<string>;
-  prioritizedItemIds: Set<string>;
   onToggleExclude: (itemId: string) => void;
-  onTogglePrioritize: (itemId: string) => void;
   customHourEstimates: Map<string, number>;
   onSetCustomHours: (itemId: string, hours: number | null) => void;
+  itemOrder: Record<string, string[]>;
+  onItemOrderChange: (order: Record<string, string[]>) => void;
 }) {
   const formatLastRun = (date: Date) => {
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -1141,95 +1483,16 @@ function TodaysDashSection({
               </div>
             )}
 
-            {/* Item Selection Section */}
-            {activeItems.length > 0 && (
-              <div className="mb-6 text-left">
-                <p className="text-slate-400 text-xs mb-2 font-medium uppercase tracking-wide">Tasks to Include</p>
-                <div className="max-h-[40vh] overflow-y-auto space-y-1 bg-slate-800/30 rounded-lg p-2">
-                  {activeItems.map((item) => {
-                    const itemId = String(item.pr?.id || item.linearIssue?.id);
-                    const isExcluded = excludedItemIds.has(itemId);
-                    const isPrioritized = prioritizedItemIds.has(itemId);
-                    const title = item.linearIssue?.title || item.pr?.title || "";
-                    const identifier = item.linearIssue?.identifier || (item.pr ? `#${item.pr.number}` : "");
-                    const priorityLabel = item.linearIssue?.priorityLabel;
-
-                    return (
-                      <div
-                        key={itemId}
-                        className={`flex items-center gap-2 p-2 rounded ${isExcluded ? "opacity-40" : ""} ${isPrioritized ? "bg-emerald-500/10" : "hover:bg-slate-800/50"}`}
-                      >
-                        <button
-                          onClick={() => onTogglePrioritize(itemId)}
-                          className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
-                            isPrioritized
-                              ? "bg-emerald-500/30 text-emerald-400"
-                              : "bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300"
-                          }`}
-                          title={isPrioritized ? "Remove priority" : "Prioritize to top"}
-                        >
-                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                        </button>
-                        <button
-                          onClick={() => onToggleExclude(itemId)}
-                          className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
-                            isExcluded
-                              ? "bg-red-500/30 text-red-400"
-                              : "bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300"
-                          }`}
-                          title={isExcluded ? "Include" : "Exclude"}
-                        >
-                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                        <span className={`text-xs flex-1 truncate ${isExcluded ? "text-slate-500 line-through" : "text-slate-300"}`}>
-                          {title}
-                        </span>
-                        {identifier && (
-                          <span className="text-xs text-slate-500 flex-shrink-0">{identifier}</span>
-                        )}
-                        {priorityLabel && (
-                          <span className={`px-1.5 py-0.5 text-xs rounded flex-shrink-0 ${
-                            priorityLabel === "Urgent" ? "bg-red-500/20 text-red-400" :
-                            priorityLabel === "High" ? "bg-orange-500/20 text-orange-400" :
-                            priorityLabel === "Medium" ? "bg-yellow-500/20 text-yellow-400" :
-                            "bg-slate-700 text-slate-400"
-                          }`}>
-                            {priorityLabel}
-                          </span>
-                        )}
-                        <input
-                          type="number"
-                          min="0.5"
-                          max="8"
-                          step="0.5"
-                          placeholder="hrs"
-                          value={customHourEstimates.get(itemId) || ""}
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            onSetCustomHours(itemId, isNaN(val) ? null : val);
-                          }}
-                          className="w-12 px-1.5 py-0.5 text-xs text-center bg-slate-800 border border-slate-600 rounded text-white placeholder-slate-500 focus:outline-none focus:border-slate-400 flex-shrink-0"
-                          title="Custom hours (leave empty for AI estimate)"
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-                {(prioritizedItemIds.size > 0 || excludedItemIds.size > 0 || customHourEstimates.size > 0) && (
-                  <div className="mt-2 pt-2 border-t border-slate-800 flex justify-between text-xs">
-                    <span className="text-emerald-400">{prioritizedItemIds.size} prioritized</span>
-                    {customHourEstimates.size > 0 && (
-                      <span className="text-blue-400">{customHourEstimates.size} custom hrs</span>
-                    )}
-                    <span className="text-red-400">{excludedItemIds.size} excluded</span>
-                  </div>
-                )}
-              </div>
-            )}
+            {/* Item Selection Section with Drag-and-Drop */}
+            <TaskSelectionWithDnd
+              activeItems={activeItems}
+              excludedItemIds={excludedItemIds}
+              onToggleExclude={onToggleExclude}
+              customHourEstimates={customHourEstimates}
+              onSetCustomHours={onSetCustomHours}
+              itemOrder={itemOrder}
+              onItemOrderChange={onItemOrderChange}
+            />
 
             <div className="flex gap-3 justify-center pt-2">
               <button

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { estimateEffort, scopeToWorkday } from "@/lib/openai/client";
+import { estimateEffort } from "@/lib/openai/client";
 
 interface ActionableItemInput {
   type: "pr" | "linear" | "pr_with_linear";
@@ -41,36 +41,87 @@ export async function POST(request: Request) {
     const items: ActionableItemInput[] = body.items || [];
     const maxHours: number = body.maxHours || 6;
     const customHours: Record<string, number> = body.customHours || {};
-    const prioritizedIds: string[] = body.prioritizedIds || [];
+    const itemOrder: Record<string, string[]> = body.itemOrder || {};
 
     if (items.length === 0) {
       return NextResponse.json({ items: [], totalHours: 0 });
     }
 
-    // Build a map of item ID -> sortPriority for reliable sorting later
-    const sortPriorityMap = new Map<string, number>();
-    for (const item of items) {
+    // Category definitions matching the frontend
+    type CategoryKey = "urgent" | "pr" | "inprogress-high" | "inprogress-medium" | "inprogress-low" | "inprogress-none" | "todo-high" | "todo-medium" | "todo-low" | "todo-none";
+    const CATEGORY_ORDER: CategoryKey[] = [
+      "urgent", "pr", "inprogress-high", "inprogress-medium", "inprogress-low", "inprogress-none",
+      "todo-high", "todo-medium", "todo-low", "todo-none"
+    ];
+
+    // Helper to get category from an item
+    const getCategoryKey = (item: ActionableItemInput): CategoryKey => {
+      const sortPriority = item.sortPriority || 999;
+      const section = Math.floor(sortPriority / 100);
+      const priority = item.linearIssue ?
+        (item.linearIssue.priorityLabel === "Urgent" ? 1 :
+         item.linearIssue.priorityLabel === "High" ? 2 :
+         item.linearIssue.priorityLabel === "Medium" ? 3 :
+         item.linearIssue.priorityLabel === "Low" ? 4 : 0) : 0;
+
+      if (section === 1) return "urgent";
+      if (section === 2) return "pr";
+      if (section === 3) {
+        if (priority === 1 || priority === 2) return "inprogress-high";
+        if (priority === 3) return "inprogress-medium";
+        if (priority === 4) return "inprogress-low";
+        return "inprogress-none";
+      }
+      if (priority === 1 || priority === 2) return "todo-high";
+      if (priority === 3) return "todo-medium";
+      if (priority === 4) return "todo-low";
+      return "todo-none";
+    };
+
+    // Helper to get item's unique ID (for matching with itemOrder)
+    const getItemId = (item: ActionableItemInput): string => {
+      return item.pr?.id ? String(item.pr.id) : item.linearIssue?.id || "";
+    };
+
+    // Sort items strictly by category order, then by custom itemOrder within category
+    const sortedItems = [...items].sort((a, b) => {
+      const aCategory = getCategoryKey(a);
+      const bCategory = getCategoryKey(b);
+
+      // First by category order
+      const aCatIndex = CATEGORY_ORDER.indexOf(aCategory);
+      const bCatIndex = CATEGORY_ORDER.indexOf(bCategory);
+      if (aCatIndex !== bCatIndex) {
+        return aCatIndex - bCatIndex;
+      }
+
+      // Within same category, use custom order if available
+      const aId = getItemId(a);
+      const bId = getItemId(b);
+      const categoryOrder = itemOrder[aCategory] || [];
+      const aOrderIndex = categoryOrder.indexOf(aId);
+      const bOrderIndex = categoryOrder.indexOf(bId);
+
+      if (aOrderIndex !== -1 && bOrderIndex !== -1) {
+        return aOrderIndex - bOrderIndex;
+      }
+      if (aOrderIndex !== -1) return -1;
+      if (bOrderIndex !== -1) return 1;
+
+      // Fall back to original sortPriority
+      return (a.sortPriority || 999) - (b.sortPriority || 999);
+    });
+
+    // Re-transform to match sorted order for estimation
+    const sortedTaskItems = sortedItems.map((item) => {
       const hasLinear = item.type === "linear" || item.type === "pr_with_linear";
       const id = hasLinear && item.linearIssue?.identifier
         ? item.linearIssue.identifier
         : `pr-${item.pr?.id}`;
-      sortPriorityMap.set(id, item.sortPriority);
-    }
 
-    // Transform to format expected by estimateEffort
-    const taskItems = items.map((item) => {
-      // Use identifier (ENG-123) for Linear issues as it's more meaningful for the LLM
-      // For pr_with_linear, prefer Linear identifier since it has the linked context
-      const hasLinear = item.type === "linear" || item.type === "pr_with_linear";
-      const id = hasLinear && item.linearIssue?.identifier
-        ? item.linearIssue.identifier
-        : `pr-${item.pr?.id}`;
-
-      // Truncate description to avoid token limits
       const truncate = (str: string | undefined, max: number) =>
         str && str.length > max ? str.slice(0, max) + "..." : str;
 
-      // Get recent comments (last 3)
       const recentComments = item.linearIssue?.comments?.nodes
         ?.slice(0, 3)
         .map((c) => truncate(c.body, 200))
@@ -94,7 +145,6 @@ export async function POST(request: Request) {
         prCommits: item.pr?.commits,
         prComments: item.pr?.comments,
         prReviewComments: item.pr?.review_comments,
-        // Include actual review comment content for "Has Review Comments" PRs
         reviewCommentsContent: item.prReviewComments?.slice(0, 10).map(c => ({
           body: truncate(c.body, 300),
           user: c.user.login,
@@ -108,23 +158,14 @@ export async function POST(request: Request) {
       };
     });
 
-    const estimated = await estimateEffort(taskItems);
+    // Estimate effort for all items
+    const estimated = await estimateEffort(sortedTaskItems);
 
-    // Apply custom hour overrides
-    const withCustomHours = estimated.map((item) => {
-      // Find the original item to get its ID for custom hours lookup
-      const original = items.find((orig) => {
-        const hasLinear = orig.type === "linear" || orig.type === "pr_with_linear";
-        if (hasLinear && orig.linearIssue?.identifier) {
-          return orig.linearIssue.identifier === item.id;
-        }
-        return `pr-${orig.pr?.id}` === item.id;
-      });
-
-      // Check for custom hours using both PR id and Linear id
-      const prId = original?.pr?.id ? String(original.pr.id) : null;
-      const linearId = original?.linearIssue?.id || null;
-      const customHourValue = (prId && customHours[prId]) || (linearId && customHours[linearId]);
+    // Apply custom hour overrides while preserving order
+    const withCustomHours = estimated.map((item, index) => {
+      const original = sortedItems[index];
+      const itemId = getItemId(original);
+      const customHourValue = customHours[itemId];
 
       if (customHourValue) {
         return {
@@ -136,123 +177,53 @@ export async function POST(request: Request) {
       return item;
     });
 
-    // Sort for scoping: by section first, then prioritized within section
-    // This ensures PRs are included before lower-priority Linear issues
-    const prioritizedSet = new Set(prioritizedIds);
-    const sortedForScoping = [...withCustomHours].sort((a, b) => {
-      // Get sortPriority from map to determine section
-      const aSortPriority = sortPriorityMap.get(a.id) ?? 999;
-      const bSortPriority = sortPriorityMap.get(b.id) ?? 999;
-      const aSection = Math.floor(aSortPriority / 100);
-      const bSection = Math.floor(bSortPriority / 100);
+    // Include items in order until we hit limit, allow exactly 1 overflow item, then stop
+    let runningTotal = 0;
+    let cutoffIndex = withCustomHours.length; // Default: include all
+    let overflowIndex: number | null = null;
 
-      // First by section (urgent -> PRs -> in progress -> backlog)
-      if (aSection !== bSection) {
-        return aSection - bSection;
+    for (let i = 0; i < withCustomHours.length; i++) {
+      const prevTotal = runningTotal;
+      runningTotal += withCustomHours[i].hours;
+
+      if (prevTotal >= maxHours) {
+        // We already hit or exceeded the limit, stop here (don't include this item)
+        cutoffIndex = i;
+        break;
       }
 
-      // Within same section, find original items to get prioritized status
-      const aOriginal = items.find((orig) => {
-        const hasLinear = orig.type === "linear" || orig.type === "pr_with_linear";
-        if (hasLinear && orig.linearIssue?.identifier) {
-          return orig.linearIssue.identifier === a.id;
-        }
-        return `pr-${orig.pr?.id}` === a.id;
-      });
-      const bOriginal = items.find((orig) => {
-        const hasLinear = orig.type === "linear" || orig.type === "pr_with_linear";
-        if (hasLinear && orig.linearIssue?.identifier) {
-          return orig.linearIssue.identifier === b.id;
-        }
-        return `pr-${orig.pr?.id}` === b.id;
-      });
-
-      const aId = aOriginal?.pr?.id ? String(aOriginal.pr.id) : aOriginal?.linearIssue?.id || "";
-      const bId = bOriginal?.pr?.id ? String(bOriginal.pr.id) : bOriginal?.linearIssue?.id || "";
-
-      const aPrioritized = prioritizedSet.has(aId);
-      const bPrioritized = prioritizedSet.has(bId);
-
-      // Within same section, prioritized items first
-      if (aPrioritized && !bPrioritized) return -1;
-      if (!aPrioritized && bPrioritized) return 1;
-
-      // Then by sortPriority within section
-      return aSortPriority - bSortPriority;
-    });
-
-    // Build a set of prioritized IDs using the task item IDs (Linear identifier or pr-{id})
-    const prioritizedTaskIds = new Set<string>();
-    for (const item of sortedForScoping) {
-      const original = items.find((orig) => {
-        const hasLinear = orig.type === "linear" || orig.type === "pr_with_linear";
-        if (hasLinear && orig.linearIssue?.identifier) {
-          return orig.linearIssue.identifier === item.id;
-        }
-        return `pr-${orig.pr?.id}` === item.id;
-      });
-      const origId = original?.pr?.id ? String(original.pr.id) : original?.linearIssue?.id || "";
-      if (prioritizedSet.has(origId)) {
-        prioritizedTaskIds.add(item.id);
+      if (runningTotal > maxHours && overflowIndex === null) {
+        // This is the first item that causes overflow - include it but mark it
+        overflowIndex = i;
+        // Continue to next iteration to set cutoffIndex properly
       }
     }
 
-    const { items: scopedItems, totalHours, overflowAt } = scopeToWorkday(sortedForScoping, maxHours, prioritizedTaskIds);
-
-    // Map back to include original item data with hours
-    // Calculate overflow based on original scoping order, mark items BEFORE sorting
-    const overflowItemIds = new Set<string>();
-    if (overflowAt !== null) {
-      for (let i = overflowAt; i < scopedItems.length; i++) {
-        overflowItemIds.add(scopedItems[i].id);
+    // If we found an overflow item, cut off after it
+    if (overflowIndex !== null) {
+      cutoffIndex = overflowIndex + 1;
+      runningTotal = 0;
+      for (let i = 0; i < cutoffIndex; i++) {
+        runningTotal += withCustomHours[i].hours;
       }
     }
 
-    const result = scopedItems.map((estimated) => {
-      const original = items.find((item) => {
-        const hasLinear = item.type === "linear" || item.type === "pr_with_linear";
-        if (hasLinear && item.linearIssue?.identifier) {
-          return item.linearIssue.identifier === estimated.id;
-        }
-        return `pr-${item.pr?.id}` === estimated.id;
-      });
+    const totalHours = runningTotal;
 
-      // Get sortPriority from map using the estimated.id (which matches map keys)
-      const sortPriority = sortPriorityMap.get(estimated.id) ?? 999;
+    // Map only the included items, preserving exact order
+    const result = withCustomHours.slice(0, cutoffIndex).map((estimated, index) => {
+      const original = sortedItems[index];
+      const isOverflow = overflowIndex !== null && index === overflowIndex;
 
       return {
         ...original,
-        sortPriority, // Explicitly set from map to ensure it's never lost
-        _taskId: estimated.id, // Store task ID for reliable sorting
         hours: estimated.hours,
         reasoning: estimated.reasoning,
-        isOverflow: overflowItemIds.has(estimated.id),
+        isOverflow,
       };
     });
 
-    // Sort by section first, then by prioritized within section
-    // Sections: 100s=urgent, 200s=PRs, 300s=in progress, 400s=backlog
-    const sortedResult = result.sort((a, b) => {
-      // sortPriority is now directly on items from the map
-      const aSection = Math.floor(a.sortPriority / 100);
-      const bSection = Math.floor(b.sortPriority / 100);
-
-      // First by section (urgent -> PRs -> in progress -> backlog)
-      if (aSection !== bSection) {
-        return aSection - bSection;
-      }
-
-      // Within same section, prioritized items first
-      const aId = a.pr?.id ? String(a.pr.id) : a.linearIssue?.id || "";
-      const bId = b.pr?.id ? String(b.pr.id) : b.linearIssue?.id || "";
-      const aPrioritized = prioritizedSet.has(aId);
-      const bPrioritized = prioritizedSet.has(bId);
-      if (aPrioritized && !bPrioritized) return -1;
-      if (!aPrioritized && bPrioritized) return 1;
-
-      // Then by original sortPriority within section
-      return a.sortPriority - b.sortPriority;
-    });
+    const sortedResult = result;
 
     return NextResponse.json({ items: sortedResult, totalHours, maxHours, isOverTime: totalHours > maxHours });
   } catch (error) {
