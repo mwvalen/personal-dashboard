@@ -164,6 +164,7 @@ interface ActionableItem {
 interface DailyPlanItem extends ActionableItem {
   hours: number;
   reasoning: string;
+  isOverflow?: boolean;
 }
 
 function combineActionableItems(
@@ -268,6 +269,7 @@ function Dashboard() {
   const [actionableError, setActionableError] = useState<string | null>(null);
   const [dailyPlanItems, setDailyPlanItems] = useState<DailyPlanItem[]>([]);
   const [dailyPlanTotal, setDailyPlanTotal] = useState(0);
+  const [dailyPlanMaxHours, setDailyPlanMaxHours] = useState(0);
   const [dailyPlanLoading, setDailyPlanLoading] = useState(false);
   const [dailyPlanLastRun, setDailyPlanLastRun] = useState<Date | null>(null);
   const [showRefreshConfirm, setShowRefreshConfirm] = useState(false);
@@ -279,6 +281,7 @@ function Dashboard() {
   const [showAllStale, setShowAllStale] = useState(false);
   const [excludedItemIds, setExcludedItemIds] = useState<Set<string>>(new Set());
   const [prioritizedItemIds, setPrioritizedItemIds] = useState<Set<string>>(new Set());
+  const [customHourEstimates, setCustomHourEstimates] = useState<Map<string, number>>(new Map());
   const router = useRouter();
   const supabase = createClient();
 
@@ -294,6 +297,7 @@ function Dashboard() {
         const parsed = JSON.parse(stored);
         setDailyPlanItems(parsed.items || []);
         setDailyPlanTotal(parsed.totalHours || 0);
+        setDailyPlanMaxHours(parsed.maxHours || 0);
         setDailyPlanLastRun(parsed.lastRun ? new Date(parsed.lastRun) : null);
 
         // Only load meetings if they're from today
@@ -317,6 +321,7 @@ function Dashboard() {
     // Reset if no valid data
     setDailyPlanItems([]);
     setDailyPlanTotal(0);
+    setDailyPlanMaxHours(0);
     setDailyPlanLastRun(null);
     setCalendarEvents([]);
     setSelectedEventIds(new Set());
@@ -449,31 +454,55 @@ function Dashboard() {
     // Subtract meeting hours from available focus time
     const availableHours = Math.max(0.5, hours - totalMeetingHours);
 
+    // Convert custom hours map to object for API
+    const customHoursObj: Record<string, number> = {};
+    customHourEstimates.forEach((hours, itemId) => {
+      customHoursObj[itemId] = hours;
+    });
+
     setDailyPlanLoading(true);
     setShowHoursPrompt(false);
     fetch("/api/daily-plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: itemsToSend, maxHours: availableHours }),
+      body: JSON.stringify({
+        items: itemsToSend,
+        maxHours: availableHours,
+        customHours: customHoursObj,
+        prioritizedIds: Array.from(prioritizedItemIds),
+      }),
     })
       .then((res) => res.json())
       .then((data) => {
         if (!data.error) {
           const newLastRun = new Date();
 
-          // Sort results: prioritized items first, then others
+          // Sort results: prioritized items first WITHIN their section
+          // Sections are based on sortPriority: 100s=urgent, 200s=PRs, 300s=in progress, 400s=backlog
           const sortedItems = [...(data.items || [])].sort((a: DailyPlanItem, b: DailyPlanItem) => {
+            const aSection = Math.floor((a.sortPriority || 999) / 100);
+            const bSection = Math.floor((b.sortPriority || 999) / 100);
+
+            // First, sort by section
+            if (aSection !== bSection) {
+              return aSection - bSection;
+            }
+
+            // Within same section, prioritized items come first
             const aId = String(a.pr?.id || a.linearIssue?.id);
             const bId = String(b.pr?.id || b.linearIssue?.id);
             const aPrioritized = prioritizedItemIds.has(aId);
             const bPrioritized = prioritizedItemIds.has(bId);
             if (aPrioritized && !bPrioritized) return -1;
             if (!aPrioritized && bPrioritized) return 1;
-            return 0;
+
+            // Then by original sortPriority within section
+            return (a.sortPriority || 999) - (b.sortPriority || 999);
           });
 
           setDailyPlanItems(sortedItems);
           setDailyPlanTotal(data.totalHours || 0);
+          setDailyPlanMaxHours(data.maxHours || availableHours);
           setDailyPlanLastRun(newLastRun);
           // Persist to user-specific localStorage (including selected meetings)
           const selectedMeetings = calendarEvents
@@ -484,6 +513,7 @@ function Dashboard() {
             JSON.stringify({
               items: sortedItems,
               totalHours: data.totalHours || 0,
+              maxHours: data.maxHours || availableHours,
               lastRun: newLastRun.toISOString(),
               meetings: selectedMeetings,
             })
@@ -586,6 +616,19 @@ function Dashboard() {
     });
   };
 
+  // Set custom hour estimate for an item (empty to use AI estimate)
+  const setCustomHours = (itemId: string, hours: number | null) => {
+    setCustomHourEstimates((prev) => {
+      const newMap = new Map(prev);
+      if (hours === null || hours <= 0) {
+        newMap.delete(itemId);
+      } else {
+        newMap.set(itemId, hours);
+      }
+      return newMap;
+    });
+  };
+
   const handleHoursConfirm = () => {
     generateDailyPlan(selectedHours);
   };
@@ -665,6 +708,7 @@ function Dashboard() {
               <TodaysDashSection
                 items={dailyPlanItems}
                 totalHours={dailyPlanTotal}
+                maxHours={dailyPlanMaxHours}
                 loading={dailyPlanLoading}
                 lastRun={dailyPlanLastRun}
                 onGenerate={handleGenerateClick}
@@ -689,6 +733,8 @@ function Dashboard() {
                 prioritizedItemIds={prioritizedItemIds}
                 onToggleExclude={toggleExcludeItem}
                 onTogglePrioritize={togglePrioritizeItem}
+                customHourEstimates={customHourEstimates}
+                onSetCustomHours={setCustomHours}
               />
               {linearUnavailable && (
                 <div className="mb-4 p-3 bg-slate-900/50 border border-slate-800 rounded-lg text-center">
@@ -937,6 +983,7 @@ function ActionableItemCard({ item, now }: { item: ActionableItem; now: number }
 function TodaysDashSection({
   items,
   totalHours,
+  maxHours,
   loading,
   lastRun,
   onGenerate,
@@ -961,9 +1008,12 @@ function TodaysDashSection({
   prioritizedItemIds,
   onToggleExclude,
   onTogglePrioritize,
+  customHourEstimates,
+  onSetCustomHours,
 }: {
   items: DailyPlanItem[];
   totalHours: number;
+  maxHours: number;
   loading: boolean;
   lastRun: Date | null;
   onGenerate: () => void;
@@ -988,6 +1038,8 @@ function TodaysDashSection({
   prioritizedItemIds: Set<string>;
   onToggleExclude: (itemId: string) => void;
   onTogglePrioritize: (itemId: string) => void;
+  customHourEstimates: Map<string, number>;
+  onSetCustomHours: (itemId: string, hours: number | null) => void;
 }) {
   const formatLastRun = (date: Date) => {
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -1149,13 +1201,30 @@ function TodaysDashSection({
                             {priorityLabel}
                           </span>
                         )}
+                        <input
+                          type="number"
+                          min="0.5"
+                          max="8"
+                          step="0.5"
+                          placeholder="hrs"
+                          value={customHourEstimates.get(itemId) || ""}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            onSetCustomHours(itemId, isNaN(val) ? null : val);
+                          }}
+                          className="w-12 px-1.5 py-0.5 text-xs text-center bg-slate-800 border border-slate-600 rounded text-white placeholder-slate-500 focus:outline-none focus:border-slate-400 flex-shrink-0"
+                          title="Custom hours (leave empty for AI estimate)"
+                        />
                       </div>
                     );
                   })}
                 </div>
-                {(prioritizedItemIds.size > 0 || excludedItemIds.size > 0) && (
+                {(prioritizedItemIds.size > 0 || excludedItemIds.size > 0 || customHourEstimates.size > 0) && (
                   <div className="mt-2 pt-2 border-t border-slate-800 flex justify-between text-xs">
                     <span className="text-emerald-400">{prioritizedItemIds.size} prioritized</span>
+                    {customHourEstimates.size > 0 && (
+                      <span className="text-blue-400">{customHourEstimates.size} custom hrs</span>
+                    )}
                     <span className="text-red-400">{excludedItemIds.size} excluded</span>
                   </div>
                 )}
@@ -1280,7 +1349,11 @@ function TodaysDashSection({
               {totalMeetingHours > 0 && (
                 <span className="mr-3">Meetings: <span className="text-amber-400">{totalMeetingHours.toFixed(1)}h</span></span>
               )}
-              Tasks: <span className="font-medium text-white">{totalHours}h</span>
+              Tasks: <span className={`font-medium ${totalHours > maxHours ? "text-amber-400" : "text-white"}`}>{totalHours}h</span>
+              {maxHours > 0 && <span className="text-slate-500">/{maxHours}h</span>}
+              {totalHours > maxHours && (
+                <span className="ml-2 text-xs text-amber-400">(+{(totalHours - maxHours).toFixed(1)}h over)</span>
+              )}
             </span>
           </div>
         </>
@@ -1300,6 +1373,8 @@ function CompleteCheckmark() {
 }
 
 function DailyPlanItemCard({ item, now, isComplete }: { item: DailyPlanItem; now: number; isComplete: boolean }) {
+  const isOverflow = item.isOverflow;
+
   if (item.type === "linear" && item.linearIssue) {
     const priorityStyles: Record<number, string> = {
       1: "bg-red-500/20 text-red-400",
@@ -1334,12 +1409,19 @@ function DailyPlanItemCard({ item, now, isComplete }: { item: DailyPlanItem; now
         {isComplete ? (
           <CompleteCheckmark />
         ) : (
-          <div className="relative group flex-shrink-0">
-            <div className="px-2 py-1 bg-slate-800 rounded text-xs font-medium text-slate-300 cursor-help">
-              {item.hours}h
-            </div>
-            <div className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-slate-700 text-xs text-slate-200 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
-              {item.reasoning}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {isOverflow && (
+              <span className="px-1.5 py-0.5 text-[10px] bg-amber-500/20 text-amber-400 rounded" title="Exceeds time budget">
+                overflow
+              </span>
+            )}
+            <div className="relative group">
+              <div className="px-2 py-1 bg-slate-800 rounded text-xs font-medium text-slate-300 cursor-help">
+                {item.hours}h
+              </div>
+              <div className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-slate-700 text-xs text-slate-200 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
+                {item.reasoning}
+              </div>
             </div>
           </div>
         )}
@@ -1382,12 +1464,19 @@ function DailyPlanItemCard({ item, now, isComplete }: { item: DailyPlanItem; now
         {isComplete ? (
           <CompleteCheckmark />
         ) : (
-          <div className="relative group flex-shrink-0">
-            <div className="px-2 py-1 bg-slate-800 rounded text-xs font-medium text-slate-300 cursor-help">
-              {item.hours}h
-            </div>
-            <div className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-slate-700 text-xs text-slate-200 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
-              {item.reasoning}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {isOverflow && (
+              <span className="px-1.5 py-0.5 text-[10px] bg-amber-500/20 text-amber-400 rounded" title="Exceeds time budget">
+                overflow
+              </span>
+            )}
+            <div className="relative group">
+              <div className="px-2 py-1 bg-slate-800 rounded text-xs font-medium text-slate-300 cursor-help">
+                {item.hours}h
+              </div>
+              <div className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-slate-700 text-xs text-slate-200 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
+                {item.reasoning}
+              </div>
             </div>
           </div>
         )}

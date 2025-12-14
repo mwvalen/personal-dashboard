@@ -246,22 +246,30 @@ function getDefaultEstimate(item: TaskItem): { hours: number; reasoning: string 
 
 export function scopeToWorkday(
   items: EstimatedItem[],
-  maxHours: number = 8
-): { items: EstimatedItem[]; totalHours: number } {
+  maxHours: number = 8,
+  prioritizedIds: Set<string> = new Set()
+): { items: EstimatedItem[]; totalHours: number; overflowAt: number | null } {
   const selected: EstimatedItem[] = [];
   let totalHours = 0;
+  let overflowAt: number | null = null;
 
   for (const item of items) {
+    const isPrioritized = prioritizedIds.has(item.id);
+
     if (totalHours + item.hours <= maxHours) {
+      // Fits within budget
       selected.push(item);
       totalHours += item.hours;
-    } else if (totalHours === 0) {
-      // Always include at least one item even if it exceeds maxHours
+    } else if (isPrioritized || totalHours === 0) {
+      // Prioritized items always included, or first item always included
       selected.push(item);
+      if (overflowAt === null && totalHours + item.hours > maxHours) {
+        overflowAt = selected.length - 1; // Mark where overflow started
+      }
       totalHours += item.hours;
-      break;
     }
+    // Non-prioritized items that don't fit are skipped
   }
 
-  return { items: selected, totalHours };
+  return { items: selected, totalHours, overflowAt };
 }
