@@ -232,7 +232,7 @@ function combineActionableItems(
   linearIssues: LinearIssueData[]
 ): ActionableItem[] {
   const items: ActionableItem[] = [];
-  const linkedPRUrls = new Set<string>();
+  const processedPRUrls = new Set<string>();
 
   const linearByPrUrl = new Map<string, LinearIssueData>();
   for (const issue of linearIssues) {
@@ -241,12 +241,12 @@ function combineActionableItems(
     );
     if (prAttachment?.url) {
       linearByPrUrl.set(prAttachment.url, issue);
-      linkedPRUrls.add(prAttachment.url);
     }
   }
 
   for (const prData of prs) {
     const linkedLinear = linearByPrUrl.get(prData.pr.html_url);
+    processedPRUrls.add(prData.pr.html_url);
     let sortPriority = 200;
     if (linkedLinear && linkedLinear.priority === 1) {
       sortPriority = 100 + linkedLinear.priority;
@@ -272,7 +272,7 @@ function combineActionableItems(
     const prAttachment = issue.attachments?.nodes?.find(
       (a) => a.url?.includes("github.com") && a.url?.includes("/pull/")
     );
-    if (prAttachment?.url && linkedPRUrls.has(prAttachment.url)) {
+    if (prAttachment?.url && processedPRUrls.has(prAttachment.url)) {
       continue;
     }
 
