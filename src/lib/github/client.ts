@@ -99,6 +99,16 @@ class GitHubClient {
       `/repos/${owner}/${repo}/pulls/${prNumber}/comments?per_page=50`
     );
   }
+
+  async getCheckRunsForRef(
+    owner: string,
+    repo: string,
+    ref: string
+  ): Promise<{ total_count: number; check_runs: Array<{ name: string; status: string; conclusion: string | null }> }> {
+    return this.fetch<{ total_count: number; check_runs: Array<{ name: string; status: string; conclusion: string | null }> }>(
+      `/repos/${owner}/${repo}/commits/${ref}/check-runs`
+    );
+  }
 }
 
 function createGitHubClient(): GitHubClient | null {
@@ -202,6 +212,14 @@ function hasUserReviewed(reviews: GitHubReview[], username: string): boolean {
   );
 }
 
+function hasCIFailure(checkRuns: Array<{ name: string; status: string; conclusion: string | null }>): boolean {
+  return checkRuns.some(
+    (run) =>
+      run.status === "completed" &&
+      (run.conclusion === "failure" || run.conclusion === "cancelled" || run.conclusion === "timed_out")
+  );
+}
+
 export async function fetchActionablePullRequests(
   targetUsername?: string
 ): Promise<ActionablePRsResult> {
@@ -231,6 +249,7 @@ export async function fetchActionablePullRequests(
         const isAssigned = isAssignedTo(pr, username);
 
         let reviews: GitHubReview[] = [];
+        let checkRuns: Array<{ name: string; status: string; conclusion: string | null }> = [];
 
         // Fetch reviews if needed for author PRs or assigned PRs with review_ready
         if (isAuthor || (isAssigned && hasLabel(pr, "review_ready"))) {
@@ -238,6 +257,16 @@ export async function fetchActionablePullRequests(
             reviews = await client.getPullRequestReviews(repo.owner, repo.repo, pr.number);
           } catch (e) {
             console.error(`Failed to fetch reviews for PR #${pr.number}:`, e);
+          }
+        }
+
+        // Fetch check runs for author PRs to detect CI failures
+        if (isAuthor) {
+          try {
+            const checkRunsResult = await client.getCheckRunsForRef(repo.owner, repo.repo, pr.head.ref);
+            checkRuns = checkRunsResult.check_runs;
+          } catch (e) {
+            console.error(`Failed to fetch check runs for PR #${pr.number}:`, e);
           }
         }
 
@@ -249,6 +278,9 @@ export async function fetchActionablePullRequests(
           if (hasLabel(pr, "fix_needed")) {
             reason = "fix_needed";
             reasonLabel = "Fixes Needed";
+          } else if (hasCIFailure(checkRuns)) {
+            reason = "ci_failing";
+            reasonLabel = "CI Failing";
           } else if (hasChangesRequested(reviews)) {
             reason = "changes_requested";
             reasonLabel = "Changes Requested";

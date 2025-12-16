@@ -67,7 +67,8 @@ export type ActionReason =
   | "qa_needed"
   | "fix_needed"
   | "changes_requested"
-  | "has_comments";
+  | "has_comments"
+  | "ci_failing";
 
 export interface ActionablePR {
   pr: GitHubPullRequest;
